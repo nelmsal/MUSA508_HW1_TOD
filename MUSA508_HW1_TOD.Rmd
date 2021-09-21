@@ -10,6 +10,7 @@ editor_options:
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+options(tigris_class = "sf")
 ```
 
 ```{r setup_package, warning = FALSE, message = FALSE}
@@ -18,67 +19,146 @@ library(tidycensus)
 library(sf)
 library(tmap) # mapping, install if you don't have it
 set.seed(717)
+
+mapTheme <- function(base_size = 12) {
+  theme(
+    text = element_text( color = "black"),
+    plot.title = element_text(size = 16,colour = "black"),
+    plot.subtitle=element_text(face="italic"),
+    plot.caption=element_text(hjust=0),
+    axis.ticks = element_blank(),
+    panel.background = element_blank(),axis.title = element_blank(),
+    axis.text = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(colour = "black", fill=NA, size=2),
+    strip.text.x = element_text(size = 14))
+}
+
+plotTheme <- function(base_size = 12) {
+  theme(
+    text = element_text( color = "black"),
+    plot.title = element_text(size = 16,colour = "black"),
+    plot.subtitle = element_text(face="italic"),
+    plot.caption = element_text(hjust=0),
+    axis.ticks = element_blank(),
+    
+    panel.background = element_blank(),
+    panel.grid.major = element_line("grey80", size = 0.1),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(colour = "black", fill=NA, size=2),
+    strip.background = element_rect(fill = "grey80", color = "white"),
+    strip.text = element_text(size=12),
+    
+    axis.title = element_text(size=12),
+    axis.text = element_text(size=10),
+    
+    
+    plot.background = element_blank(),
+    
+    legend.background = element_blank(),
+    legend.title = element_text(colour = "black", face = "italic"),
+    legend.text = element_text(colour = "black", face = "italic"),
+    
+    strip.text.x = element_text(size = 14)
+  )
+}
+
 ```
+
+# Bay Area Rapid Transit in the East Bay: Transit Oriented Development Study
 
 # 1. Data Wrangling
 
-**Transit Routes & Stops** are for the Bay Area Regional Transit, the San Francisco Bay Area's hybrid subway-commuter rail.
+## 1.A Transit Routes & Stops
+
+Transit Routes & Stops are for the Bay Area Regional Transit, the San Francisco Bay Area's hybrid subway-commuter rail.
 The data was sourced from the regional [Metropolitan Transportation Commission](https://opendata.mtc.ca.gov/ "MTC Open Data Portal"), who collected the data from the varying transit agencies.
 The files themselves were pulled from the open data site's API queries.
 
-```{r transit_data_import}
+```{r 1A_transit_import}
 
-BART_stops =
-  st_read("https://services3.arcgis.com/i2dkYWmb4wHvYPda/arcgis/rest/services/transitstops_existing_planned_2021/FeatureServer/0/query?where=1%3D1&outFields=*&outSR=2227&f=geojson") %>%
-  filter(agency_id == "BA", route_s_nm!="Blue-Sun") %>%
-  mutate(
-    route_s_nm = ifelse(
-      route_s_nm=="Blue-Wkd/Sat", "Blue", 
-      route_s_nm)
-  )
-
-BART_routes = 
-  st_read("https://services3.arcgis.com/i2dkYWmb4wHvYPda/arcgis/rest/services/transitroutes_01_2020/FeatureServer/0/query?where=1%3D1&outFields=*&outSR=2227&f=geojson") %>%
-  filter(agency_id == "BA", route_s_nm!="Blue-Sun") %>%
-  mutate(
-    route_s_nm = ifelse(
-      route_s_nm=="Blue-Wkd/Sat", "Blue", 
-      route_s_nm)
-  )
+if (exists("BART_stops")==FALSE){
+  BART_stops =
+    st_read("https://services3.arcgis.com/i2dkYWmb4wHvYPda/arcgis/rest/services/transitstops_existing_planned_2021/FeatureServer/0/query?where=1%3D1&outFields=*&outSR=2227&f=geojson") %>%
+    filter(agency_id == "BA", route_s_nm!="Blue-Sun") %>%
+    mutate(
+      route_s_nm = ifelse(
+        route_s_nm=="Blue-Wkd/Sat", "Blue", 
+        route_s_nm)
+    )
+  CA_crs = st_crs(BART_stops)
+  cat(CA_crs$input, ', EPSG:', CA_crs$epsg)
+  
+  BART_routes = 
+    st_read("https://services3.arcgis.com/i2dkYWmb4wHvYPda/arcgis/rest/services/transitroutes_01_2020/FeatureServer/0/query?where=1%3D1&outFields=*&outSR=2227&f=geojson") %>%
+    filter(agency_id == "BA", route_s_nm!="Blue-Sun") %>%
+    mutate(
+      route_s_nm = ifelse(
+        route_s_nm=="Blue-Wkd/Sat", "Blue", 
+        route_s_nm)
+    ) %>%
+    st_transform(., CA_crs)
+}
 ```
 
-```{r transit_data_prep}
-BART_routes = 
-  BART_routes %>%
-  filter(agency_id == "BA", route_s_nm!="Blue-Sun") %>%
-  mutate(
-    route_s_nm = ifelse(
-      route_s_nm=="Blue-Wkd/Sat", "Blue", 
-      route_s_nm)
-  )
+```{r 1A_transit_prep}
+
+
 ```
 
-1.  In the first code chunk you will do that above and then edit the call-outs in the dplyr pipe sequence to `rename` and `mutate` your data.
+## 1.B Census 2000
 
-2.  You will transform the data to `WGS84` by adding the correct EPSG code.
-    This is discussed heavily in the exercise.
+Census
 
-3.  You will produce a map of one of the variables you picked and highlight the neighborhood you picked.
-    There are call-out within the `ggplot` code for you to edit.
+```{r 1C_Tract2000}
 
-4.  You can run the code chunks and lines of code as you edit to make sure everything works.
+```
 
-5.  Once you are done, hit the `knit` button at the top of the script window (little blue knitting ball) and you will see the output.
-    Once it is what you want...
+## 1.C ACS 2019
 
-6.  Use the `Git` tab on the bottom left of right (depending on hour your Rstudio is laid out) and click the check box to `stage` all of your changes, write a commit note, hit the `commit` button, and then the `Push` button to push it to Github.
+Census
 
-7.  Check your Github repo to see you work in the cloud.
+```{r 1C_Tract2019}
 
-8.  Email your lab instructor with a link!
+```
 
-9.  Congrats!
-    You made a map in code!
+# 2 Time & Space Analysis of TOD & non-TOD Tracts between 2000 & 2019
+
+*Four small-multiple (2000 & 2019) visualizations*
+
+### Median Rent, [Second], [Third], [Fourth]
+
+## 2.A Median Rent Map
+
+```{r 2A_variable1}
+
+```
+
+## 2.B Second Variable Map
+
+```{r 2B_variable2}
+
+```
+
+## 2.C Second Variable Map
+
+```{r 2C_variable3}
+
+```
+
+## 2.D Fourth Variable Map
+
+```{r 2D_variable4}
+
+```
+
+# 3 Fourth Variable
+
+```{r 2D_variable4}
+
+```
 
 ## Load data from {tidycensus}
 
