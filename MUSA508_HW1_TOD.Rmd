@@ -118,6 +118,22 @@ Census
 
 ```{r 1C_Tract2000}
 
+# VIew variables
+View(load_variables(2000, "sf1", cache = TRUE))
+
+tracts00_var = c(
+  'H001001'
+)
+
+# get census 2000
+tracts00 = 
+  get_decennial(
+    geography = "tract", 
+    variables = tracts00_var, 
+    year=2000, state='CA', county='Alameda',
+    geometry=T) %>% 
+  st_transform(CA_crs)
+
 ```
 
 ### 1.C ACS 2019
@@ -126,6 +142,18 @@ Census
 
 ```{r 1C_Tract2019}
 
+tracts19_var = c(
+  "B25026_001E",                                         "B02001_002E",                                         "B15001_050E",                                         "B15001_009E",                                         "B19013_001E",                                         "B25058_001E",                                         "B06012_002E"                                          )
+
+tracts19 <-  
+  get_acs(
+    geography = "tract", 
+    variables = tracts19_var, 
+    year=2019, state='CA', county='Alameda',
+    geometry=T) %>% 
+  st_transform(CA_crs)
+
+
 ```
 
 ### 1.D Crime Data
@@ -133,6 +161,7 @@ Census
 Crime
 
 ```{r 1D_Crime}
+
 
 ```
 
