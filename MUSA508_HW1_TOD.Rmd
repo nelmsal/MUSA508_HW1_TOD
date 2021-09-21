@@ -138,11 +138,11 @@ Crime
 
 ------------------------------------------------------------------------
 
-## 2 Time & Space Analysis of TOD & non-TOD Tracts between 2000 & 2019
+## 2 Four Time & Space Maps
 
-*Four small-multiple (2000 & 2019) visualizations*
+***Comparing TOD & non-TOD Tracts between 2000 & 2019***
 
-#### Median Rent, [Second], [Third], [Fourth]
+Median Rent, [Second], [Third], [Fourth]
 
 ### 2.A Median Rent Map
 
@@ -170,7 +170,8 @@ Crime
 
 ------------------------------------------------------------------------
 
-## 3 
+## 3 Bar Plot
+
 *One grouped bar plot making these same comparisons*
 
 ```{r 3_barplot}
@@ -179,7 +180,8 @@ Crime
 
 ------------------------------------------------------------------------
 
-## 4
+## 4 Table
+
 *One table making these same comparisons*
 
 ```{r 4_table}
@@ -189,6 +191,7 @@ Crime
 ------------------------------------------------------------------------
 
 ## 5 Graduated Symbol Maps
+
 *Two Graduated Symbol Maps within 0.5 miles transit stations*
 
 ### 5.B Map of Population within ½ Mile of BART Stations
@@ -205,8 +208,9 @@ Crime
 
 ------------------------------------------------------------------------
 
-## 6 Rent & Crime as a function of distance to BART stations
-*'geom_line' plot*
+## 6 Geom Line Plots
+
+***Rent & Crime compared to the Distance to BART stations***
 
 ```{r 6_geom_line}
 
@@ -216,11 +220,7 @@ Crime
 
 ## 7 Policy Brief
 
-
-
-
-
-
+------------------------------------------------------------------------
 
 ## Load data from {tidycensus}
 
