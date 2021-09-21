@@ -1,30 +1,247 @@
 ---
-title: "HW1_TOD_Oakland"
-author: "Alexander Nelms"
-date: "9/20/2021"
+title: "Assignment 1: Oakland's TOD"
+author: "Alex Nelms"
+date: "9/8/2021"
 output: github_document
+editor_options: 
+  markdown: 
+    wrap: sentence
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## R Markdown
-
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
+```{r setup_package, warning = FALSE, message = FALSE}
+library(tidyverse)
+library(tidycensus)
+library(sf)
+library(tmap) # mapping, install if you don't have it
+set.seed(717)
 ```
 
-## Including Plots
+# 1. Data Wrangling
 
-You can also embed plots, for example:
+**Transit Routes & Stops** are for the Bay Area Regional Transit, the San Francisco Bay Area's hybrid subway-commuter rail.
+The data was sourced from the regional [Metropolitan Transportation Commission](https://opendata.mtc.ca.gov/ "MTC Open Data Portal"), who collected the data from the varying transit agencies.
+The files themselves were pulled from the open data site's API queries.
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+```{r transit_data_import}
+
+BART_stops =
+  st_read("https://services3.arcgis.com/i2dkYWmb4wHvYPda/arcgis/rest/services/transitstops_existing_planned_2021/FeatureServer/0/query?where=1%3D1&outFields=*&outSR=2227&f=geojson") %>%
+  filter(agency_id == "BA", route_s_nm!="Blue-Sun") %>%
+  mutate(
+    route_s_nm = ifelse(
+      route_s_nm=="Blue-Wkd/Sat", "Blue", 
+      route_s_nm)
+  )
+
+BART_routes = 
+  st_read("https://services3.arcgis.com/i2dkYWmb4wHvYPda/arcgis/rest/services/transitroutes_01_2020/FeatureServer/0/query?where=1%3D1&outFields=*&outSR=2227&f=geojson") %>%
+  filter(agency_id == "BA", route_s_nm!="Blue-Sun") %>%
+  mutate(
+    route_s_nm = ifelse(
+      route_s_nm=="Blue-Wkd/Sat", "Blue", 
+      route_s_nm)
+  )
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```{r transit_data_prep}
+BART_routes = 
+  BART_routes %>%
+  filter(agency_id == "BA", route_s_nm!="Blue-Sun") %>%
+  mutate(
+    route_s_nm = ifelse(
+      route_s_nm=="Blue-Wkd/Sat", "Blue", 
+      route_s_nm)
+  )
+```
+
+1.  In the first code chunk you will do that above and then edit the call-outs in the dplyr pipe sequence to `rename` and `mutate` your data.
+
+2.  You will transform the data to `WGS84` by adding the correct EPSG code.
+    This is discussed heavily in the exercise.
+
+3.  You will produce a map of one of the variables you picked and highlight the neighborhood you picked.
+    There are call-out within the `ggplot` code for you to edit.
+
+4.  You can run the code chunks and lines of code as you edit to make sure everything works.
+
+5.  Once you are done, hit the `knit` button at the top of the script window (little blue knitting ball) and you will see the output.
+    Once it is what you want...
+
+6.  Use the `Git` tab on the bottom left of right (depending on hour your Rstudio is laid out) and click the check box to `stage` all of your changes, write a commit note, hit the `commit` button, and then the `Push` button to push it to Github.
+
+7.  Check your Github repo to see you work in the cloud.
+
+8.  Email your lab instructor with a link!
+
+9.  Congrats!
+    You made a map in code!
+
+## Load data from {tidycensus}
+
+```{r acs_vars, cache = TRUE, message = FALSE, warning = FALSE, results=FALSE}
+acs_vars <- c(
+    "B01001_001",    # ACS total Pop stimat
+    "B15003_001",
+    "B25002_001",     # stimat of total housing units
+    "B25002_003",     # Numbr of vacant housing units
+    "B19013_001",    # Mdian HH Incom ($)
+    "B02001_002",  # Popl dscribing thmslvs as "whit alon"
+    "B07010_001",     # stimat!!Total Individuals
+    "B07010_002",  # stimat!!Total:!!No incom
+    "B07010_011", # stimat!!Total:!!With incom:!!$75,000 or mor
+    "B07010_023",   # stimat!!Total:!!Movd within sam county:
+    "B07010_034",  # stimat!!Total:!!Movd from diffrnt county:
+    "B07010_045",   # stimat!!Total:!!Movd from diffrnt country:
+    "B07010_012",  # Estimate!!Total:!!Same house 1 year ago:
+    "B15003_023",  #Estimate!!Total:!!Disc jockeys, except radio
+    "B15003_024",  #Estimate!!Total:!!Disc jockeys, except radio
+    "B15003_025"  #Estimate!!Total:!!Disc jockeys, except radio
+
+              ) 
+
+myTracts <- c(
+    "42101007400", 
+    "42101007300", 
+    "42101008000", 
+    "42101007800", 
+    "42101007700",
+    "42101008000",
+    "42101007900",
+    "42101008802", # just west of UPENN
+    #"42101036900", # UPENN, hospitals, woodlands
+    #"42101008801", # UPENN
+    "42101008702",
+    "42101008701",
+    "42101008601"
+              )
+
+
+acsTractsPHL.2019.sf <- get_acs(geography = "tract",
+                             year = 2019,
+                             variables = acs_vars,
+                             geometry = TRUE,
+                             state  = "PA",
+                             county = "Philadelphia",
+                             output = "wide") %>%
+  dplyr::select (GEOID, NAME, all_of(paste0(acs_vars,"E"))) %>%
+  rename (
+      total_pop.2019 = B01001_001E,    # ACS total Pop estimate
+      total_25yrpop.2019 = B15003_001E,
+      total_HU.2019 = B25002_001E,     # Estimate of total housing units
+      total_vacant.2019 = B25002_003E,     # Number of vacant housing units
+      med_HH_income.2019 = B19013_001E,    # Median HH Income ($)
+      total_white.2019 = B02001_002E,  # People describing themselves as "white alone"
+      total_indi.2019 = B07010_001E,     # Estimate!!Total Individuals
+      total_no_income.2019 = B07010_002E,  # Estimate!!Total:!!No income
+      total_income_75k.2019 = B07010_011E, # Estimate!!Total:!!With income:!!$75,000 or more
+      total_moved_incnty.2019 = B07010_023E,   # Estimate!!Total:!!Moved within same county:
+      total_moved_outcnty.2019 = B07010_034E,  # Estimate!!Total:!!Moved from different county:
+      total_moved_outusa.2019 = B07010_045E,   # Estimate!!Total:!!Moved from different country:
+      total_same_house_1yr.2019 = B07010_012E,  # Estimate!!Total:!!Same house 1 year ago:
+      total_masters.2019 = B15003_023E
+  ) %>%
+  mutate(
+    Neighborhood = ifelse(GEOID %in% myTracts,
+                               "CLARK PARK",
+                               "REST OF PHILADELPHIA"),
+    moved_1yr_PCT.2019 = (1 - total_same_house_1yr.2019 / total_indi.2019 )*100,
+    masters_PCT.2019 = ((total_masters.2019 + B15003_024E+ B15003_025E) / total_25yrpop.2019 )*100
+    )
+```
+
+## Transform to WGS84 with {sf}
+
+```{r}
+acsTractsPHL.2019.sf <- acsTractsPHL.2019.sf %>% 
+  st_transform(crs = "EPSG:4326")
+```
+
+## Plot with {ggplot2}
+
+```{r ggplot_geom_sf, warning = FALSE, echo = FALSE}
+max_pct = max(acsTractsPHL.2019.sf$moved_1yr_PCT.2019[is.finite(acsTractsPHL.2019.sf$moved_1yr_PCT.2019)])
+
+ggplot()+
+  # POLYGON color 
+  geom_sf(data = acsTractsPHL.2019.sf, 
+          aes(fill = moved_1yr_PCT.2019),
+          color = "transparent")+
+  # blank on top
+  geom_sf(data = acsTractsPHL.2019.sf %>%
+            filter(Neighborhood == "CLARK PARK") %>%
+            st_union(),
+            color = "black",
+            size=1, #linetype="longdash",
+            fill = "transparent"
+          ) + 
+  scale_fill_gradient2(
+      low="green4", mid="white", high="red4", midpoint=20,
+      breaks = c(0,20,40,60), labels = c("0%","20%","40%","60%"),
+      name="% of New Residents")+
+  guides(fill = guide_colourbar(barheight = 10))+
+  labs(
+    title = "Percentage of individuals who have moved in the last year",
+    subtitle = "Focus on the Clark Park neighborhood") +
+  theme(plot.title = element_text(hjust = 0.5), axis.title.x=element_blank(), 
+        axis.text.x=element_blank(), axis.ticks.x=element_blank(),
+        axis.title.y=element_blank(), axis.text.y=element_blank(), 
+        axis.ticks.y=element_blank(),
+        panel.background = element_rect(fill='gray'))
+```
+
+\# )
+
+\#brewer.pal(3, name="Dark2")
+
+```{r ggplot_geom_sf, warning = FALSE, echo = FALSE}
+
+library(RColorBrewer)
+
+
+ggplot()+
+  #POLYGON
+  geom_sf(data = acsTractsPHL.2019.sf,
+          fill = "white",
+          color = "grey75"
+          )+
+  # POINT
+  geom_sf(data = acsTractsPHL.2019.sf  %>%
+          st_centroid(),                # to centroid
+          shape = 21, color='grey10',
+          aes(
+            size = masters_PCT.2019,    # set point size by column value
+            fill = masters_PCT.2019     # set point fill ('color') by column value
+          )) +
+  # Scale for the Point Size
+  scale_size_continuous(
+          range = c(0,6),             # range of point sizes
+          breaks = c(0,20,40,60),       # value breaks/bins of point size
+          labels = c("0 to 19 %", "20 to 39 %", "40 to 59%", "60+ %"), 
+                                        # legend labels
+          name="% of People over 25yrs with a \nMaster's, Doctoral, or Professional Degree"
+          )+
+  scale_fill_stepsn(                    # binned scale of point fill
+          colors = RColorBrewer::brewer.pal( # pulling ColorBrewer list of colors
+                      4,                # amount of bins
+                      name="BuPu"       # ColorBrewer palette
+                      ),
+          breaks = c(0,20,40,60),       # value breaks/bins of point size
+          guide = FALSE                 # remove legend (so we can have one combo)
+          )+
+    labs(
+          title = "Percentage of Adults who earned \n a Master's Degree or Higher",
+          ) +
+    theme(
+          axis.title=element_blank(), 
+          axis.text=element_blank(), axis.ticks=element_blank(), # remove ticks
+          panel.background = element_rect(fill='gray')
+          )+
+    guides(
+          size = guide_legend(
+              override.aes = list(fill = brewer.pal(4, name="BuPu"))
+          ))                            # add the ColorBrewer list to the legend
+```
