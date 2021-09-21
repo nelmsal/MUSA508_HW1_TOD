@@ -67,11 +67,15 @@ plotTheme <- function(base_size = 12) {
 
 ```
 
-# Bay Area Rapid Transit in the East Bay: Transit Oriented Development Study
+# Bay Area Rapid Transit (BART) in the East Bay
 
-# 1. Data Wrangling
+### A Transit Oriented Development Study
 
-## 1.A Transit Routes & Stops
+------------------------------------------------------------------------
+
+## 1. Data Wrangling
+
+### 1.A Transit Routes & Stops
 
 Transit Routes & Stops are for the Bay Area Regional Transit, the San Francisco Bay Area's hybrid subway-commuter rail.
 The data was sourced from the regional [Metropolitan Transportation Commission](https://opendata.mtc.ca.gov/ "MTC Open Data Portal"), who collected the data from the varying transit agencies.
@@ -108,7 +112,7 @@ if (exists("BART_stops")==FALSE){
 
 ```
 
-## 1.B Census 2000
+### 1.B Census 2000
 
 Census
 
@@ -116,7 +120,7 @@ Census
 
 ```
 
-## 1.C ACS 2019
+### 1.C ACS 2019
 
 Census
 
@@ -124,41 +128,99 @@ Census
 
 ```
 
-# 2 Time & Space Analysis of TOD & non-TOD Tracts between 2000 & 2019
+### 1.D Crime Data
+
+Crime
+
+```{r 1D_Crime}
+
+```
+
+------------------------------------------------------------------------
+
+## 2 Time & Space Analysis of TOD & non-TOD Tracts between 2000 & 2019
 
 *Four small-multiple (2000 & 2019) visualizations*
 
-### Median Rent, [Second], [Third], [Fourth]
+#### Median Rent, [Second], [Third], [Fourth]
 
-## 2.A Median Rent Map
+### 2.A Median Rent Map
 
 ```{r 2A_variable1}
 
 ```
 
-## 2.B Second Variable Map
+### 2.B Second Variable Map
 
 ```{r 2B_variable2}
 
 ```
 
-## 2.C Second Variable Map
+### 2.C Second Variable Map
 
 ```{r 2C_variable3}
 
 ```
 
-## 2.D Fourth Variable Map
+### 2.D Fourth Variable Map
 
 ```{r 2D_variable4}
 
 ```
 
-# 3 Fourth Variable
+------------------------------------------------------------------------
 
-```{r 2D_variable4}
+## 3 
+*One grouped bar plot making these same comparisons*
+
+```{r 3_barplot}
 
 ```
+
+------------------------------------------------------------------------
+
+## 4
+*One table making these same comparisons*
+
+```{r 4_table}
+
+```
+
+------------------------------------------------------------------------
+
+## 5 Graduated Symbol Maps
+*Two Graduated Symbol Maps within 0.5 miles transit stations*
+
+### 5.B Map of Population within ½ Mile of BART Stations
+
+```{r 5A_pop}
+
+```
+
+### 5.B Map of Rent within ½ Mile of BART Stations
+
+```{r 5B_rent}
+
+```
+
+------------------------------------------------------------------------
+
+## 6 Rent & Crime as a function of distance to BART stations
+*'geom_line' plot*
+
+```{r 6_geom_line}
+
+```
+
+------------------------------------------------------------------------
+
+## 7 Policy Brief
+
+
+
+
+
+
 
 ## Load data from {tidycensus}
 
