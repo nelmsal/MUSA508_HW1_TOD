@@ -121,9 +121,36 @@ Census
 # VIew variables
 View(load_variables(2000, "sf1", cache = TRUE))
 
-tracts00_var = c(
-  'H001001'
-)
+v00 = c("P001001",   # total pop
+         "P053001",   # median household income
+         "P033001",   # aggregate time to work
+         "P033011",   # aggregate time to work over 60 mins
+         "P037001",   # total over 25yr
+         "P037016",   # Male total w/ Masters
+         "P037017",   # Male total w/ Prof
+         "P037018",   # Male total w/ Doct
+         "P037033",   # Female total w/ Masters
+         "P037034",   # Female total w/ Prof
+         "P037035",   # Female total w/ Doct
+         
+        )
+
+v19 = c(
+  "B01003_001",  # total pop
+  "B19013_001",  # median household income
+  "B08135_001",  # aggregate time to work
+  "B08135_010",  # aggregate time to work over 60 mins
+  "B15003_001",  # total over 25yr
+  "B15003_023",  # total w/ Masters
+  "B15003_024",  # total w/ Prof
+  "B15003_025",  # total w/ Doct
+         )
+
+  col_nm = c("total_pop",  
+             "med_HH_income",
+             "agg_time_commute",
+             "agg_time_commute60")
+
 
 # get census 2000
 tracts00 = 
@@ -133,6 +160,16 @@ tracts00 =
     year=2000, state='CA', county='Alameda',
     geometry=T) %>% 
   st_transform(CA_crs)
+
+# rename cols
+## names(df1) = with(dict,newName[match(names(df1),oldName)])
+
+total_pop.2016 = B01001_001E,
+          total_HU.2016 = B25002_001E,
+          total_vacant.2016 = B25002_003E,
+          med_HH_Income.2016 = B19013_001E,
+          total_White.2016 = B02001_002E,
+          total_GradDeg.2016 = B06009_006E) %>%
 
 ```
 
@@ -161,6 +198,9 @@ tracts19 <-
 Crime
 
 ```{r 1D_Crime}
+
+api_key = "ZfuhpSK1tX9XxWicYM7ew1lHSPYCF9mI2MnKZdBd"
+
 
 
 ```
