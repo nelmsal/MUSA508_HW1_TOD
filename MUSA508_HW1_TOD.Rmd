@@ -119,7 +119,7 @@ Census
 ```{r 1C_Tract2000}
 
 # VIew variables
-View(load_variables(2000, "sf1", cache = TRUE))
+#View(load_variables(2009, "acs5", cache = TRUE))
 
 v00 = c("P001001",   # total pop
          "P053001",   # median household income
@@ -131,45 +131,91 @@ v00 = c("P001001",   # total pop
          "P037018",   # Male total w/ Doct
          "P037033",   # Female total w/ Masters
          "P037034",   # Female total w/ Prof
-         "P037035",   # Female total w/ Doct
+         "P037035"   # Female total w/ Doct
          
         )
 
-v19 = c(
-  "B01003_001",  # total pop
+acs_var = c(
+  "B01001_001",  # total pop
+  
   "B19013_001",  # median household income
+  
   "B08135_001",  # aggregate time to work
   "B08135_010",  # aggregate time to work over 60 mins
-  "B15003_001",  # total over 25yr
-  "B15003_023",  # total w/ Masters
-  "B15003_024",  # total w/ Prof
-  "B15003_025",  # total w/ Doct
+  
+  "B01001_010", # Male Age    22 to 24
+  "B01001_011", # Male Age    25 to 29
+  "B01001_012", # Male Age    30 to 34
+  "B01001_034", # Female Age  22 to 24
+  "B01001_035", # Female Age  25 to 29
+  "B01001_036", # Female Age  30 to 34
+  
+  "B07003_001", # total
+  "B07003_004" # total same house 1 year
+  
+  
+  #"B15003_001",  # total over 25yr
+  #"B15003_023",  # total w/ Masters
+  #"B15003_024",  # total w/ Prof
+  #"B15003_025"  # total w/ Doct
          )
 
-  col_nm = c("total_pop",  
+col_nm = c("total_pop",  
              "med_HH_income",
              "agg_time_commute",
              "agg_time_commute60")
 
 
-# get census 2000
-tracts00 = 
-  get_decennial(
-    geography = "tract", 
-    variables = tracts00_var, 
-    year=2000, state='CA', county='Alameda',
-    geometry=T) %>% 
-  st_transform(CA_crs)
+get_acs_year <- function(acs_year) {
+  acs_tracts = 
+    get_acs(
+      geography = "tract", 
+      variables = acs_var, 
+      year=acs_year, state='CA', county='Alameda',
+      geometry=T) %>%
+    st_transform(CA_crs)
+  
+  acs_tracts = 
+    acs_tracts %>%
+    dplyr::select( -NAME, -moe) %>%
+    spread(variable, estimate)
+  
+  acs_tracts =
+    acs_tracts %>%
+    mutate(
+      tot_pop       = B01001_001, 
+      med_HH_inc    = B19013_001,
+      pct_60m_commute = B01001_010 / B01001_001, 
+      tot_22_34yo   = B01001_010 + B01001_011 + B01001_012 + 
+        B01001_034 + B01001_035 + B01001_036,
+      pct_22_34yo   = tot_22_34yo/B01001_001,
+      tot_moved     = B07003_001 - B07003_004,
+      pct_moved     = tot_moved/B07003_001
+      )
+  
+  non_raw_cols = colnames(acs_tracts)[!startsWith(colnames(acs_tracts), "B")]
+  acs_tracts = acs_tracts[non_raw_cols]
+  
+  core_cols = c("GEOID","geometry")
+  
+  add_year = function(colname){
+      renamed = ifelse(!colname %in% core_cols, 
+                       paste(as.character(colname), as.character(acs_year), sep="."), 
+                       colname)
+      return (renamed)
+      }
 
-# rename cols
-## names(df1) = with(dict,newName[match(names(df1),oldName)])
+  colnames(acs_tracts) = sapply(colnames(acs_tracts),add_year)
+  
+  return (acs_tracts)
+}
 
-total_pop.2016 = B01001_001E,
-          total_HU.2016 = B25002_001E,
-          total_vacant.2016 = B25002_003E,
-          med_HH_Income.2016 = B19013_001E,
-          total_White.2016 = B02001_002E,
-          total_GradDeg.2016 = B06009_006E) %>%
+tracts09 = get_acs_year(2009)
+tracts09$geometry <- NULL
+tracts19 = get_acs_year(2019)
+
+alltracts = merge(tracts09, tracts19, by = "GEOID")
+
 
 ```
 
