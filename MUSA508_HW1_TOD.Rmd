@@ -17,7 +17,10 @@ options(tigris_class = "sf")
 library(tidyverse)
 library(tidycensus)
 library(sf)
-library(tmap) # mapping, install if you don't have it
+library(tmap)
+library(ggrepel)
+library(tigris)
+
 set.seed(717)
 
 mapTheme <- function(base_size = 12) {
@@ -78,37 +81,78 @@ plotTheme <- function(base_size = 12) {
 ### 1.A Transit Routes & Stops
 
 Transit Routes & Stops are for the Bay Area Regional Transit, the San Francisco Bay Area's hybrid subway-commuter rail.
-The data was sourced from the regional [Metropolitan Transportation Commission](https://opendata.mtc.ca.gov/ "MTC Open Data Portal"), who collected the data from the varying transit agencies.
-The files themselves were pulled from the open data site's API queries.
+Looking at this transportation system allows us to focus on both urban cetners and their immediate suburbs.
+The data was sourced from the regional [Metropolitan Transportation Commission](https://opendata.mtc.ca.gov/ "MTC Open Data Portal").
 
-```{r 1A_transit_import}
+```{r 1A_transit_import, echo=FALSE}
 
-if (exists("BART_stops")==FALSE){
-  BART_stops =
-    st_read("https://services3.arcgis.com/i2dkYWmb4wHvYPda/arcgis/rest/services/transitstops_existing_planned_2021/FeatureServer/0/query?where=1%3D1&outFields=*&outSR=2227&f=geojson") %>%
-    filter(agency_id == "BA", route_s_nm!="Blue-Sun") %>%
-    mutate(
-      route_s_nm = ifelse(
-        route_s_nm=="Blue-Wkd/Sat", "Blue", 
-        route_s_nm)
-    )
-  CA_crs = st_crs(BART_stops)
-  cat(CA_crs$input, ', EPSG:', CA_crs$epsg)
-  
-  BART_routes = 
-    st_read("https://services3.arcgis.com/i2dkYWmb4wHvYPda/arcgis/rest/services/transitroutes_01_2020/FeatureServer/0/query?where=1%3D1&outFields=*&outSR=2227&f=geojson") %>%
-    filter(agency_id == "BA", route_s_nm!="Blue-Sun") %>%
-    mutate(
-      route_s_nm = ifelse(
-        route_s_nm=="Blue-Wkd/Sat", "Blue", 
-        route_s_nm)
-    ) %>%
-    st_transform(., CA_crs)
-}
+stop_path = "https://services3.arcgis.com/i2dkYWmb4wHvYPda/arcgis/rest/services/transitstops_existing_planned_2021/FeatureServer/0/query?where=1%3D1&outFields=*&outSR=2227&f=geojson"
+
+route_path = "https://services3.arcgis.com/i2dkYWmb4wHvYPda/arcgis/rest/services/transitroutes_01_2020/FeatureServer/0/query?where=1%3D1&outFields=*&outSR=2227&f=geojson"
+
+BART.stops =
+  # from the MTC API, who sourced it from BART
+  st_read(stop_path) %>%
+  # only look at BART & weekday routes
+  filter(agency_id == "BA", route_s_nm!="Blue-Sun", route_s_nm!='Beige') %>%
+  mutate(
+    route_s_nm = ifelse(
+      route_s_nm=="Blue-Wkd/Sat", "Blue", 
+      route_s_nm)
+  ) %>%
+  st_transform(., 2227)
+# Projection is (NAD83) California State Plan, Zone 2 (in FEET)
+# EPSG:2226
+CA_crs = st_crs(BART.stops)
+#cat(CA_crs$input, ', EPSG:', CA_crs$epsg)
+
+BART.routes = 
+  st_read(route_path) %>%
+  filter(agency_id == "BA", route_s_nm!="Blue-Sun") %>%
+  mutate(
+    route_s_nm = ifelse(
+      route_s_nm=="Blue-Wkd/Sat", "Blue", 
+      route_s_nm)
+  ) %>%
+  st_transform(., CA_crs)
 ```
+
+### Prep Transit Data
+
+Narrowing down Census Tracts & Transit stations to the core area of the San Francisco Bay Area: Oakland, Berkeley, and the immediate nearby cities.
 
 ```{r 1A_transit_prep}
 
+city_path = 'https://services3.arcgis.com/i2dkYWmb4wHvYPda/arcgis/rest/services/region_jurisdiction_clp/FeatureServer/0/query?where=1%3D1&outFields=jurname,fipco&outSR=2227&f=geojson'
+EB.cities = st_read(city_path) 
+
+major_EB = c('Berkeley', 'Oakland')
+minor_EB = c('Alameda', 'Albany', 'Emeryville', 'Piedmont')
+is_EB = c(minor_EB, major_EB)
+
+EB.cities = EB.cities[match(is_EB, EB.cities$jurname), ] %>%
+  select( -fipco) %>%
+  rename(
+    city = jurname
+  ) %>%
+  st_transform(., CA_crs)
+
+BART.stops =
+  BART.stops %>%
+  st_filter(., st_buffer(st_union(EB.cities), dist=5280*.5+1))
+
+EB.labels = 
+  EB.cities[match(minor_EB, EB.cities$city), ] %>%
+  st_centroid(EB.cities) %>%
+  rename(
+    label = city
+  ) %>%
+  mutate(
+       lon = map_dbl(geometry, ~st_centroid(.x)[[1]]),
+       lat = map_dbl(geometry, ~st_centroid(.x)[[2]])
+     )
+
+BART.stops
 
 ```
 
@@ -116,29 +160,15 @@ if (exists("BART_stops")==FALSE){
 
 Census
 
-```{r 1C_Tract2000}
-
-# VIew variables
-#View(load_variables(2009, "acs5", cache = TRUE))
-
-v00 = c("P001001",   # total pop
-         "P053001",   # median household income
-         "P033001",   # aggregate time to work
-         "P033011",   # aggregate time to work over 60 mins
-         "P037001",   # total over 25yr
-         "P037016",   # Male total w/ Masters
-         "P037017",   # Male total w/ Prof
-         "P037018",   # Male total w/ Doct
-         "P037033",   # Female total w/ Masters
-         "P037034",   # Female total w/ Prof
-         "P037035"   # Female total w/ Doct
-         
-        )
+```{r 1B_Tract2000}
 
 acs_var = c(
   "B01001_001",  # total pop
   
   "B19013_001",  # median household income
+  "B25001_001",  # housing units
+  "B25058_001", # Median Contract rent
+  "B25071_001",   # median gross rent as perfect of household income
   
   "B08135_001",  # aggregate time to work
   "B08135_010",  # aggregate time to work over 60 mins
@@ -150,30 +180,32 @@ acs_var = c(
   "B01001_035", # Female Age  25 to 29
   "B01001_036", # Female Age  30 to 34
   
+  #"B08201_001", # household size
+  #"B08201_002", # households with not vehicle
+  
   "B07003_001", # total
   "B07003_004" # total same house 1 year
   
+  #"B24114_001", # total occupations
+  #"B24114_068"  # total software developers
   
-  #"B15003_001",  # total over 25yr
-  #"B15003_023",  # total w/ Masters
-  #"B15003_024",  # total w/ Prof
-  #"B15003_025"  # total w/ Doct
+  #"C24050_001", # total employed people (16yr +)
+  #"C24050_008"  # total employed people in information sector (software, tech, publishing, broadcast, telecommunications)
          )
 
-col_nm = c("total_pop",  
-             "med_HH_income",
-             "agg_time_commute",
-             "agg_time_commute60")
-
-
+  col_nm = c("total_pop",  
+               "med_HH_income",
+               "agg_time_commute",
+               "agg_time_commute60")
+  
 get_acs_year <- function(acs_year) {
-  acs_tracts = 
-    get_acs(
-      geography = "tract", 
-      variables = acs_var, 
-      year=acs_year, state='CA', county='Alameda',
-      geometry=T) %>%
-    st_transform(CA_crs)
+    acs_tracts = 
+      get_acs(
+        geography = "tract", 
+        variables = acs_var, 
+        year=acs_year, state='CA', county='Alameda',
+        geometry=T) %>%
+      st_transform(CA_crs)
   
   acs_tracts = 
     acs_tracts %>%
@@ -185,57 +217,299 @@ get_acs_year <- function(acs_year) {
     mutate(
       tot_pop       = B01001_001, 
       med_HH_inc    = B19013_001,
-      pct_60m_commute = B01001_010 / B01001_001, 
-      tot_22_34yo   = B01001_010 + B01001_011 + B01001_012 + 
-        B01001_034 + B01001_035 + B01001_036,
+      med_rent      = B25058_001,
+      tot_units     = B25001_001,
+      pct_60m_commute = B08135_010 / B08135_001, 
+      tot_22_34yo   = B01001_010 + B01001_011 + B01001_012 
+        + B01001_034 + B01001_035 + B01001_036,
       pct_22_34yo   = tot_22_34yo/B01001_001,
       tot_moved     = B07003_001 - B07003_004,
-      pct_moved     = tot_moved/B07003_001
+      pct_moved     = tot_moved/B07003_001,
+      pct_med_rent  = B25071_001,
+      #pct_no_car    = B08201_002 / B08201_001,
+      year          = acs_year
       )
-  
+
   non_raw_cols = colnames(acs_tracts)[!startsWith(colnames(acs_tracts), "B")]
   acs_tracts = acs_tracts[non_raw_cols]
   
-  core_cols = c("GEOID","geometry")
+  #core_cols = c("GEOID","geometry")
   
-  add_year = function(colname){
-      renamed = ifelse(!colname %in% core_cols, 
-                       paste(as.character(colname), as.character(acs_year), sep="."), 
-                       colname)
-      return (renamed)
-      }
+  #add_year = function(colname){
+  #    renamed = ifelse(!colname %in% core_cols, 
+  #                     paste(as.character(colname), as.character(acs_year), sep="."), 
+  #                     colname)
+  #    return (renamed)
+  #    }
 
-  colnames(acs_tracts) = sapply(colnames(acs_tracts),add_year)
+  #colnames(acs_tracts) = sapply(colnames(acs_tracts),add_year)
   
   return (acs_tracts)
 }
 
+# add ACS employment columns since tidycensus won't import them
+get_acs_subinfo = function(acs_year){   
+  
+  directory = 'C:/Users/nelms/OneDrive/Penn/MUSA-508/Files'
+  filename = gsub(" ","",paste('census', acs_year, '_employment.csv'))
+  
+  focus_year = read.csv(file=file.path(directory, filename))
+  
+  focus_year = 
+    focus_year %>%
+    dplyr::select( -NAME, -moe, -X) %>%
+    spread(variable, estimate)
+    
+  focus_year = 
+    focus_year %>%
+    mutate(
+      tot_loc_emp = C24050_001, # total employed people (16yr +)
+      tot_loc_emp_info = C24050_008, # total employed people in information sector 
+      # includes (software, tech, publishing, broadcast, telecommunications)
+      year = acs_year
+    )
+  focus_year$GEOID = lapply(as.character(focus_year$GEOID), function(x) paste('0',x,sep=''))
+      
+  
+  non_raw_cols = colnames(focus_year)[!startsWith(colnames(focus_year), "C")]
+  focus_year = focus_year[non_raw_cols]
+  
+  return(focus_year)
+}
+
 tracts09 = get_acs_year(2009)
-tracts09$geometry <- NULL
 tracts19 = get_acs_year(2019)
 
-alltracts = merge(tracts09, tracts19, by = "GEOID")
+alltracts = st_as_sf(rbind(tracts09, tracts19))
+
+acs_info = rbind(get_acs_subinfo(2009), get_acs_subinfo(2019))
+
+alltracts = st_as_sf(merge(alltracts, acs_info, by = c('GEOID','year')))
+
+```
+
+#### Preprepaing the Census Data
+
+
+```{r 1B.2_EastBay}
+st_erase <- function(x, y) {
+  st_difference(x, st_union(y))
+}
+EB.water =
+  area_water("CA", "Alameda", class = "sf") %>%
+  st_transform(., CA_crs)
+alltracts <- st_erase(alltracts, EB.water)
+
+alltracts.center =
+  alltracts[c('GEOID','geometry')] %>%
+  st_centroid(alltracts) %>%
+  st_join(., EB.cities, left=TRUE)
+
+alltracts.center[
+  alltracts.center$GEOID == '06001427200', 'city'
+  ] = 'Alameda'
+alltracts.center[
+  alltracts.center$GEOID == '06001406000', 'city'
+  ] = 'Oakland'
+alltracts.center = alltracts.center[alltracts.center$city %in% is_EB,]
+
+center_geoms = alltracts.center$GEOID
+alltracts = alltracts[alltracts$GEOID %in% center_geoms,]
+
+alltracts =
+  alltracts %>%
+  mutate(
+    # Location Quotient for the 
+    lq_emp_info = (tot_loc_emp_info/tot_loc_emp) / (sum(tot_loc_emp_info) / sum(tot_loc_emp)),
+    land_area   = st_area(alltracts),
+    dens_ppl    = tot_pop/land_area,
+    dens_units  = tot_units /land_area,
+    med_rent_inf = ifelse(year == "2009", med_rent * 1.19, med_rent),
+    med_HH_inc_inf = ifelse(year == "2009", med_HH_inc * 1.19, med_HH_inc)
+  )
+
+ggplot() +
+  geom_sf(data=alltracts, size=.5,
+          color='grey80', fill='grey90') +
+  geom_sf(data=EB.cities, fill='transparent', 
+          color=alpha('grey50',.5),
+          lwd=1, linetype = "dashed") + 
+  geom_sf(data=alltracts.center, color='grey50', size=.5) +
+  geom_sf(data=BART.stops, fill=BART.stops$route_s_nm,
+          color='grey30', shape=21) + 
+  geom_text(
+    data=EB.labels, check_overlap=TRUE,
+    size = 2, fontface='bold', color='grey20',
+    aes(x=lon,y=lat, label=label)) + 
+  theme(axis.title=element_blank(), 
+       axis.text=element_blank(),
+       axis.ticks=element_blank()) + 
+  mapTheme()
+
+
 
 
 ```
 
-### 1.C ACS 2019
-
-Census
-
 ```{r 1C_Tract2019}
 
-tracts19_var = c(
-  "B25026_001E",                                         "B02001_002E",                                         "B15001_050E",                                         "B15001_009E",                                         "B19013_001E",                                         "B25058_001E",                                         "B06012_002E"                                          )
+multipleRingBuffer <- function(inputPolygon, maxDistance, interval) 
+{
+  #create a list of distances that we'll iterate through to create each ring
+  distances <- seq(0, maxDistance, interval)
+  #we'll start with the second value in that list - the first is '0'
+  distancesCounter <- 2
+  #total number of rings we're going to create
+  numberOfRings <- floor(maxDistance / interval)
+  #a counter of number of rings
+  numberOfRingsCounter <- 1
+  #initialize an otuput data frame (that is not an sf)
+  allRings <- data.frame()
+  
+  #while number of rings  counteris less than the specified nubmer of rings
+  while (numberOfRingsCounter <= numberOfRings) 
+  {
+    #if we're interested in a negative buffer and this is the first buffer
+    #(ie. not distance = '0' in the distances list)
+    if(distances[distancesCounter] < 0 & distancesCounter == 2)
+    {
+      #buffer the input by the first distance
+      buffer1 <- st_buffer(inputPolygon, distances[distancesCounter])
+      #different that buffer from the input polygon to get the first ring
+      buffer1_ <- st_difference(inputPolygon, buffer1)
+      #cast this sf as a polygon geometry type
+      thisRing <- st_cast(buffer1_, "POLYGON")
+      #take the last column which is 'geometry'
+      thisRing <- as.data.frame(thisRing[,ncol(thisRing)])
+      #add a new field, 'distance' so we know how far the distance is for a give ring
+      thisRing$distance <- distances[distancesCounter]
+    }
+    
+    
+    #otherwise, if this is the second or more ring (and a negative buffer)
+    else if(distances[distancesCounter] < 0 & distancesCounter > 2) 
+    {
+      #buffer by a specific distance
+      buffer1 <- st_buffer(inputPolygon, distances[distancesCounter])
+      #create the next smallest buffer
+      buffer2 <- st_buffer(inputPolygon, distances[distancesCounter-1])
+      #This can then be used to difference out a buffer running from 660 to 1320
+      #This works because differencing 1320ft by 660ft = a buffer between 660 & 1320.
+      #bc the area after 660ft in buffer2 = NA.
+      thisRing <- st_difference(buffer2,buffer1)
+      #cast as apolygon
+      thisRing <- st_cast(thisRing, "POLYGON")
+      #get the last field
+      thisRing <- as.data.frame(thisRing$geometry)
+      #create the distance field
+      thisRing$distance <- distances[distancesCounter]
+    }
+    
+    #Otherwise, if its a positive buffer
+    else 
+    {
+      #Create a positive buffer
+      buffer1 <- st_buffer(inputPolygon, distances[distancesCounter])
+      #create a positive buffer that is one distance smaller. So if its the first buffer
+      #distance, buffer1_ will = 0. 
+      buffer1_ <- st_buffer(inputPolygon, distances[distancesCounter-1])
+      #difference the two buffers
+      thisRing <- st_difference(buffer1,buffer1_)
+      #cast as a polygon
+      thisRing <- st_cast(thisRing, "POLYGON")
+      #geometry column as a data frame
+      thisRing <- as.data.frame(thisRing[,ncol(thisRing)])
+      #add teh distance
+      thisRing$distance <- distances[distancesCounter]
+    }  
+    
+    #rbind this ring to the rest of the rings
+    allRings <- rbind(allRings, thisRing)
+    #iterate the distance counter
+    distancesCounter <- distancesCounter + 1
+    #iterate the number of rings counter
+    numberOfRingsCounter <- numberOfRingsCounter + 1
+  }
+  
+  #convert the allRings data frame to an sf data frame
+  allRings <- st_as_sf(allRings)
+}
 
-tracts19 <-  
-  get_acs(
-    geography = "tract", 
-    variables = tracts19_var, 
-    year=2019, state='CA', county='Alameda',
-    geometry=T) %>% 
-  st_transform(CA_crs)
+BART.buffers <- 
+  rbind(
+    st_buffer(BART.stops, 5280*.5) %>%
+      mutate(Legend = "Buffer") %>%
+      dplyr::select(Legend),
+    st_union(st_buffer(BART.stops, 5280*.5)) %>%
+      st_sf() %>%
+      mutate(Legend = "Unioned Buffer"))
 
+buffer = filter(BART.buffers, Legend=="Unioned Buffer")
+
+clip = 
+  st_intersection(buffer, alltracts[alltracts$year == 2019,]) %>%
+    dplyr::select(GEOID, land_area) %>%
+    mutate(
+      clip_area = st_area(.),
+      pct_in_tod = as.vector(clip_area / land_area),
+      Selection_Type = "Clip")
+
+clipped = clip[c("GEOID","pct_in_tod","clip_area")]
+clipped$geometry = NULL
+
+alltracts$pct_in_tod = NULL
+alltracts$clip_area = NULL
+
+alltracts = 
+  merge(alltracts, clipped, by = "GEOID", all.x = TRUE)
+alltracts[is.na(alltracts$clip_area), 'clip_area'] = 0
+alltracts[is.na(alltracts$pct_in_tod), 'pct_in_tod'] = 0
+
+alltracts$clip_area = as.vector(alltracts$clip_area)
+
+selection = 
+  alltracts[buffer,] %>%
+    dplyr::select(GEOID, pct_in_tod) %>%
+    mutate(
+      Selection_Type = "Spatial Selection")
+
+selectCentroids =
+  alltracts.center[buffer,] %>%
+    st_drop_geometry() %>%
+    left_join(dplyr::select(alltracts, GEOID, pct_in_tod)) %>%
+    st_sf() %>%
+    mutate(
+      Selection_Type = "Select by Centroids"
+      )
+
+ggplot() +
+  geom_sf(data=clip, aes(fill=pct_in_tod)) +
+  geom_sf(data=selection, aes(fill=pct_in_tod)) +
+  geom_sf(data=selectCentroids, aes(fill=pct_in_tod)) +
+  geom_sf(data=BART.buffers, fill='transparent', color='red') + 
+  geom_sf(
+    data=alltracts[(alltracts$pct_in_tod>=.5)|((alltracts$pct_in_tod<.5) & (alltracts$pct_in_tod>.20) & (alltracts$clip_area>278784)), ], fill='transparent', color='black'
+          ) + 
+  geom_sf(
+    data=alltracts[alltracts$GEOID=='06001400200',], fill='yellow'
+  )+
+  scale_fill_steps2(
+    low = "red",
+    mid = "white",
+    midpoint=.5,
+    high = "blue",
+    name='% within TOD buffer'
+  ) + 
+  facet_wrap(~Selection_Type) + 
+  mapTheme()
+
+tod_tracts = as.data.frame(alltracts[
+  (alltracts$pct_in_tod>=.5)|
+  ((alltracts$pct_in_tod<.5)&(alltracts$pct_in_tod>.20)&(alltracts$clip_area>278784)),
+  ])[,'GEOID']
+
+alltracts$TOD = FALSE
+alltracts[alltracts$GEOID %in% tod_tracts, "TOD"] = TRUE
 
 ```
 
@@ -247,7 +521,13 @@ Crime
 
 api_key = "ZfuhpSK1tX9XxWicYM7ew1lHSPYCF9mI2MnKZdBd"
 
+tracts09 %>% 
+  group_by(GEOID)
+  summarise(st_union(geometry))
 
+t09 <- tracts09 %>%
+  group_by(GEOID, year) %>%
+  st_union(tracts09)
 
 ```
 
@@ -259,25 +539,30 @@ api_key = "ZfuhpSK1tX9XxWicYM7ew1lHSPYCF9mI2MnKZdBd"
 
 Median Rent, [Second], [Third], [Fourth]
 
-### 2.A Median Rent Map
+### 2.A Population Density 
+*People per Square Foot (of Land Area)*
 
 ```{r 2A_variable1}
 
+
+
 ```
 
-### 2.B Second Variable Map
+### 2.B Percent of Median Household Income spent on Rent
 
 ```{r 2B_variable2}
 
 ```
 
-### 2.C Second Variable Map
+### 2.C Percent of People who have moved in the Last Year
 
 ```{r 2C_variable3}
 
 ```
 
-### 2.D Fourth Variable Map
+### 2.D Location Quotient of People employed in the Information Industry
+*Ratio of the amount of Information industry employees (e.g. software, technology, & media companies)*
+*to the total amount of employees — both in the Census Tract & Region (East Bay)*
 
 ```{r 2D_variable4}
 
