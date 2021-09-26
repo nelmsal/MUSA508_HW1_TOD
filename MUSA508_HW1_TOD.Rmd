@@ -20,6 +20,7 @@ library(sf)
 library(tmap)
 library(ggrepel)
 library(tigris)
+library(RColorBrewer)
 
 set.seed(717)
 
@@ -68,6 +69,9 @@ plotTheme <- function(base_size = 12) {
   )
 }
 
+key_file = "C:/Users/nelms/OneDrive/Code/census_api_key.txt"
+census_key = readChar(key_file, file.info(key_file)$size)
+census_api_key(census_key, overwrite = TRUE)
 ```
 
 # Bay Area Rapid Transit (BART) in the East Bay
@@ -86,9 +90,11 @@ The data was sourced from the regional [Metropolitan Transportation Commission](
 
 ```{r 1A_transit_import, echo=FALSE, include = FALSE}
 
-stop_path = "https://services3.arcgis.com/i2dkYWmb4wHvYPda/arcgis/rest/services/transitstops_existing_planned_2021/FeatureServer/0/query?where=1%3D1&outFields=*&outSR=2227&f=geojson"
+#stop_path = "https://services3.arcgis.com/i2dkYWmb4wHvYPda/arcgis/rest/services/transitstops_existing_planned_2021/FeatureServer/0/query?where=1%3D1&outFields=*&outSR=2227&f=geojson"
+stop_path = 'C:/Users/nelms/OneDrive/Penn/MUSA-508/Files/BART_stops.geojson'
 
-route_path = "https://services3.arcgis.com/i2dkYWmb4wHvYPda/arcgis/rest/services/transitroutes_01_2020/FeatureServer/0/query?where=1%3D1&outFields=*&outSR=2227&f=geojson"
+#route_path = "https://services3.arcgis.com/i2dkYWmb4wHvYPda/arcgis/rest/services/transitroutes_01_2020/FeatureServer/0/query?where=1%3D1&outFields=*&outSR=2227&f=geojson"
+route_path = 'C:/Users/nelms/OneDrive/Penn/MUSA-508/Files/BART_routes.geojson'
 
 BART.stops =
   # from the MTC API, who sourced it from BART
@@ -124,7 +130,8 @@ Narrowing down Census Tracts & Transit stations to the urban area of the Eastern
 ```{r 1A_transit_prep, include = FALSE}
 
 # PULL CITY BOUNDARIES FROM REGIONAL MTC OPEN DATA
-city_path = 'https://services3.arcgis.com/i2dkYWmb4wHvYPda/arcgis/rest/services/region_jurisdiction_clp/FeatureServer/0/query?where=1%3D1&outFields=jurname,fipco&outSR=2227&f=geojson'
+#city_path = 'https://services3.arcgis.com/i2dkYWmb4wHvYPda/arcgis/rest/services/region_jurisdiction_clp/FeatureServer/0/query?where=1%3D1&outFields=jurname,fipco&outSR=2227&f=geojson'
+city_path = 'C:/Users/nelms/OneDrive/Penn/MUSA-508/Files/EastBay_cities.geojson'
 EB.cities = st_read(city_path) 
 
 # NARROW AREAS TO MAJOR & MINOR CITIES
@@ -172,6 +179,104 @@ EB.labels =
 
 ```
 
+### Get Buffers of BART Stops
+
+```{r 1A.2_Buffers}
+
+mile = 5280
+
+max_point_poly_distance = function(
+  focus.points,
+  focus.polys
+){
+  focus.polys.exteriorpts = 
+    focus.polys %>%
+    st_convex_hull() %>%
+    st_cast(., "MULTIPOINT") %>%
+    st_union() %>%
+    st_cast(., "POINT")
+  
+  focus.points.vector = as.vector(focus.points$geometry)
+  
+  closest_distance_current_point_poly = function(current.polys.pt){
+    current_poly_distances =
+      sapply(focus.points.vector, 
+             function(current.points.pt) st_distance(
+               current.points.pt,
+               current.polys.pt))
+    min_current_distance = min(current_poly_distances)
+    
+    return(min_current_distance)
+  }
+  
+  max_pt_poly_dist = max(sapply(focus.polys.exteriorpts,
+                                closest_distance_current_point_poly))
+  
+  return(max_pt_poly_dist)
+}
+
+max_dist_stop_EB = max_point_poly_distance(BART.stops, EB.cities)
+buffer_max_distance = ceiling(max_dist_stop_EB/mile)
+
+
+multipleRingBuffer_transit = function(
+  transit.stops,
+  buffer_width=.5,
+  mile_buff_cap=5,
+  mile=5280
+  ){
+  
+  buffer_rings_dists = seq(from=buffer_width, to=mile_buff_cap, by=buffer_width)
+  
+  for (current_buffer_distance in buffer_rings_dists) {
+    
+    buffer.difference = 
+      transit.stops %>% 
+      st_buffer((current_buffer_distance-buffer_width)*mile) %>% 
+      st_union()
+    
+    buffer.new = 
+      transit.stops %>%
+      st_buffer(., current_buffer_distance*mile) %>%
+      st_difference(., buffer.difference) %>%
+      mutate(distance = current_buffer_distance)
+    
+    buffer.union = 
+      buffer.new %>%
+      st_union() %>%
+      st_sf() %>%
+      st_difference(., buffer.difference) %>%
+      mutate(stop_id='ALL',stop_nm='UNION',
+             route_count=0,routes='', distance=current_buffer_distance) %>%
+      subset(., select=colnames(buffer.new))
+    
+    if (current_buffer_distance==.5) {
+      buffer.temp = st_as_sf(rbind(buffer.union, buffer.new))
+    } else buffer.temp = st_as_sf(rbind(buffer.temp, buffer.union, buffer.new))
+  }
+  row.names(buffer.temp) <- NULL
+  return(buffer.temp)
+}
+
+
+
+
+ggplot() + 
+  geom_sf(data=EB.cities, fill='grey90') + 
+  geom_sf(data=BART.routes, color='grey20', alpha=.5, lwd=1.5) + 
+  geom_sf(data=buffer.temp[buffer.temp$stop_id=='ALL',], fill='transparent',
+          aes(color=distance), lwd=.75
+          ) + 
+  geom_sf(data=BART.stops, fill='white',
+          color='grey30', shape=21) + 
+  scale_color_stepsn(
+    breaks=c(0,buffer_rings_dists), 
+    colors=brewer.pal(11, name='Spectral')) + 
+  mapTheme()
+
+```
+
+
 ### 1.B American Community Survey Census Tracts (2009 & 2019)
 *Loading Census Tracts & Variables*
 
@@ -208,13 +313,20 @@ acs_var = c(
 # FUNCTION TO PULL EACH ACS YEAR'S CENSUS TRACTS
 get_acs_year <- function(acs_year) {
   # TIDY CENSUS PULL
-  acs_tracts = 
-      get_acs(
-        geography = "tract", 
-        variables = acs_var, 
-        year=acs_year, state='CA', county='Alameda',
-        geometry=T) %>%
-      st_transform(CA_crs)
+  #acs_tracts = 
+  #    get_acs(
+  #      geography = "tract", 
+  #      variables = acs_var, 
+  #      year=acs_year, state='CA', county='Alameda',
+  #      geometry=T) %>%
+  #    st_transform(CA_crs)
+  
+  directory = 'C:/Users/nelms/OneDrive/Penn/MUSA-508/Files'
+  filename = gsub(" ","",paste('census', acs_year, '_tracts.geojson'))
+  tract_path = file.path(directory, filename)
+    
+  acs_tracts = st_read(tract_path) 
+  
   acs_tracts = 
     acs_tracts %>%
     dplyr::select( -NAME, -moe) %>%
@@ -393,6 +505,10 @@ BART.buffers <-
       mutate(Legend = "Unioned Buffer"))
 buffer = filter(BART.buffers, Legend=="Unioned Buffer")
 
+BART.buffers = 
+  BART.buffers[BART.buffers$Legend != 'Buffer',c('geometry')] %>%
+  mutate(distance = .5)
+
 # CLIP TRACTS BY BUFFER
 clip = 
   st_intersection(buffer, alltracts[alltracts$year == 2019,]) %>%
@@ -470,13 +586,21 @@ ggplot() +
 
 ```
 
+
+```{r}
+
+
+
+
+```
+
 ### 1.D Crime Data
 
 Crime
 
 ```{r 1D_Crime}
 
-api_key = "ZfuhpSK1tX9XxWicYM7ew1lHSPYCF9mI2MnKZdBd"
+api_key = "ZtfuhpSK1tX9XxWicYM7ew1lHSPYCF9mI2MnKZdBd"
 
 tracts09 %>% 
   group_by(GEOID)
@@ -501,8 +625,6 @@ Median Rent, [Second], [Third], [Fourth]
 *People per Square Foot (of Land Area)*
 
 ```{r 2A_variable1}
-
-qN <- function(variable, buckets) {as.factor(ntile(variable, buckets))}
 
 ggplot()+
   geom_sf(data = EB)+
