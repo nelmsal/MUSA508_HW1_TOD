@@ -179,60 +179,72 @@ EB.labels =
 
 ```
 
-### Get Buffers of BART Stops
+### 1/2 Mile Buffers of BART Stops
 
 ```{r 1A.2_Buffers}
 
 mile = 5280
 
-max_point_poly_distance = function(
-  focus.points,
-  focus.polys
+# GET CLOSEST DISTANCES BETWEEN TWO DATAFRAMES OF POINTS AND POLYGONS
+min_point_poly_distances = function(
+  focus.points, # transit (BART) stops
+  focus.polys   # focus area (East Bay) boundary
 ){
+  # GET DATAFRAME OF ALL BOUNDARY POINTS
   focus.polys.exteriorpts = 
     focus.polys %>%
-    st_convex_hull() %>%
     st_cast(., "MULTIPOINT") %>%
     st_union() %>%
     st_cast(., "POINT")
   
+  # GET VECTOR OF FOCUS POINTS
   focus.points.vector = as.vector(focus.points$geometry)
   
-  closest_distance_current_point_poly = function(current.polys.pt){
-    current_poly_distances =
-      sapply(focus.points.vector, 
-             function(current.points.pt) st_distance(
-               current.points.pt,
-               current.polys.pt))
-    min_current_distance = min(current_poly_distances)
-    
+  # FUNCTION TO FIND THE SMALLEST DISTANCE BETWEEN 
+  # A CURRENT POINT AND A VECTOR OF POINTS
+  closest_distance_currentpt_vectorpts = function(current.pt, vector.pts){
+    # RUN OVER POINT VECTOR TO FIND DISTANCES TO CURRENT POINT
+    current_point_distances =
+      sapply(vector.pts, function(vector.pt) st_distance(vector.pt,current.pt))
+    # SMALLEST DISTANCE BETWEEN CURRENT POINT AND ANY VECTOR POINT
+    min_current_distance = min(current_point_distances)
     return(min_current_distance)
   }
   
-  max_pt_poly_dist = max(sapply(focus.polys.exteriorpts,
-                                closest_distance_current_point_poly))
-  
-  return(max_pt_poly_dist)
+  # CLOSEST DISTANCES BETWEEN EVERY POLY BOUNDARY POINT AND EACH FOCUS POINT
+  min_pt_poly_dists =
+    # RUN THROUGH POLY POINTS
+    sapply(focus.polys.exteriorpts, function(focus.polys.current.pt)
+           closest_distance_currentpt_vectorpts(focus.polys.current.pt, focus.points.vector))
+  return(min_pt_poly_dists)
 }
 
-max_dist_stop_EB = max_point_poly_distance(BART.stops, EB.cities)
-buffer_max_distance = ceiling(max_dist_stop_EB/mile)
+# GET CLOSEST DISTANCES OF TRANSIT STOPS AND THE FOCUS AREA BOUNDARY
+min_BARTstop_EBboundary_distances = 
+  min_point_poly_distances(BART.stops, EB.cities %>% st_union() %>% st_convex_hull())
+# GET LARGEST CLOSEST DISTANCE (MILES) BETWEEN STOPS AND BOUNDARY
+max_min_BART_EB_dist = max(min_BARTstop_EBboundary_distances)/mile
+# MINIMUM DISTANCE NEEDED TO BUFFER FROM TRANSIT STOPS AND COVER ALL FOCUS AREAS
+buffer_max_distance = ceiling(max_min_BART_EB_dist)
 
-
-multipleRingBuffer_transit = function(
+# FUNCTION CREATING MULTIPLE RING BUFFERS FOR TRANSIT STOPS
+ringbuffers_ = function(
   transit.stops,
-  buffer_width=.5,
-  mile_buff_cap=5,
-  mile=5280
+  buffer_interval=.5,
+  buffer_cap=5,
+  union_default = data.frame(
+    stop_id=c('ALL'),stop_nm=c('UNION'),
+    route_count=c(0),routes=c(''))
   ){
+  mile=5280
   
-  buffer_rings_dists = seq(from=buffer_width, to=mile_buff_cap, by=buffer_width)
+  buffer_rings_dists = seq(from=buffer_interval, to=buffer_cap, by=buffer_interval)
   
   for (current_buffer_distance in buffer_rings_dists) {
     
     buffer.difference = 
       transit.stops %>% 
-      st_buffer((current_buffer_distance-buffer_width)*mile) %>% 
+      st_buffer((current_buffer_distance-buffer_interval)*mile) %>% 
       st_union()
     
     buffer.new = 
@@ -246,8 +258,7 @@ multipleRingBuffer_transit = function(
       st_union() %>%
       st_sf() %>%
       st_difference(., buffer.difference) %>%
-      mutate(stop_id='ALL',stop_nm='UNION',
-             route_count=0,routes='', distance=current_buffer_distance) %>%
+      mutate(distance=current_buffer_distance) %>%
       subset(., select=colnames(buffer.new))
     
     if (current_buffer_distance==.5) {
@@ -259,7 +270,9 @@ multipleRingBuffer_transit = function(
 }
 
 
-
+union_default = data.frame(
+    stop_id=c('ALL'),stop_nm=c('UNION'),
+    route_count=c(0),routes=c(''))
 
 ggplot() + 
   geom_sf(data=EB.cities, fill='grey90') + 
