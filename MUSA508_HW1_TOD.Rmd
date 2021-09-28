@@ -22,6 +22,9 @@ library(ggrepel)
 library(tigris)
 library(RColorBrewer)
 
+mile = 5280
+sqmile = 27878400
+
 set.seed(717)
 
 mapTheme <- function(base_size = 12) {
@@ -88,10 +91,10 @@ Transit Routes & Stops are for the Bay Area Regional Transit, the San Francisco 
 Looking at this transportation system allows us to focus on both urban cetners and their immediate suburbs.
 The data was sourced from the regional [Metropolitan Transportation Commission](https://opendata.mtc.ca.gov/ "MTC Open Data Portal").
 
-```{r 1A_transit_import, echo=FALSE, include = FALSE}
+```{r 1A_transit_import}
 
 #stop_path = "https://services3.arcgis.com/i2dkYWmb4wHvYPda/arcgis/rest/services/transitstops_existing_planned_2021/FeatureServer/0/query?where=1%3D1&outFields=*&outSR=2227&f=geojson"
-stop_path = 'C:/Users/nelms/OneDrive/Penn/MUSA-508/Files/BART_stops.geojson'
+stop_path = 'C:/Users/nelms/OneDrive/Penn/MUSA-508/Files/SF-Bay_Transit-Stops-Major_2021.geojson'
 
 #route_path = "https://services3.arcgis.com/i2dkYWmb4wHvYPda/arcgis/rest/services/transitroutes_01_2020/FeatureServer/0/query?where=1%3D1&outFields=*&outSR=2227&f=geojson"
 route_path = 'C:/Users/nelms/OneDrive/Penn/MUSA-508/Files/BART_routes.geojson'
@@ -107,6 +110,7 @@ BART.stops =
       route_s_nm)
   ) %>%
   st_transform(., 2227)
+
 # Projection is (NAD83) California State Plan, Zone 2 (in FEET)
 # EPSG:2226
 CA_crs = st_crs(BART.stops)
@@ -183,109 +187,147 @@ EB.labels =
 
 ```{r 1A.2_Buffers}
 
-mile = 5280
+buffer_distance = .5
 
-# GET CLOSEST DISTANCES BETWEEN TWO DATAFRAMES OF POINTS AND POLYGONS
-min_point_poly_distances = function(
-  focus.points, # transit (BART) stops
-  focus.polys   # focus area (East Bay) boundary
-){
-  # GET DATAFRAME OF ALL BOUNDARY POINTS
-  focus.polys.exteriorpts = 
-    focus.polys %>%
+# SET UP GEOMETRY COLLECTIONS
+focus.points = BART.stops$geometry
+focus.polys = EB.cities %>% 
+    st_convex_hull() %>% 
     st_cast(., "MULTIPOINT") %>%
     st_union() %>%
-    st_cast(., "POINT")
-  
-  # GET VECTOR OF FOCUS POINTS
-  focus.points.vector = as.vector(focus.points$geometry)
-  
-  # FUNCTION TO FIND THE SMALLEST DISTANCE BETWEEN 
-  # A CURRENT POINT AND A VECTOR OF POINTS
-  closest_distance_currentpt_vectorpts = function(current.pt, vector.pts){
-    # RUN OVER POINT VECTOR TO FIND DISTANCES TO CURRENT POINT
-    current_point_distances =
-      sapply(vector.pts, function(vector.pt) st_distance(vector.pt,current.pt))
-    # SMALLEST DISTANCE BETWEEN CURRENT POINT AND ANY VECTOR POINT
-    min_current_distance = min(current_point_distances)
-    return(min_current_distance)
-  }
-  
-  # CLOSEST DISTANCES BETWEEN EVERY POLY BOUNDARY POINT AND EACH FOCUS POINT
-  min_pt_poly_dists =
-    # RUN THROUGH POLY POINTS
-    sapply(focus.polys.exteriorpts, function(focus.polys.current.pt)
-           closest_distance_currentpt_vectorpts(focus.polys.current.pt, focus.points.vector))
-  return(min_pt_poly_dists)
-}
-
+    st_cast(., "POINT") %>%
+    st_sfc()
+# GET DISTANCES OF TRANSIT STOPS AND THE FOCUS AREA BOUNDARY
+pt_poly_distances = 
+  outer(focus.points,focus.polys,
+        FUN=Vectorize(st_distance, USE.NAMES = FALSE))
 # GET CLOSEST DISTANCES OF TRANSIT STOPS AND THE FOCUS AREA BOUNDARY
 min_BARTstop_EBboundary_distances = 
-  min_point_poly_distances(BART.stops, EB.cities %>% st_union() %>% st_convex_hull())
+  apply(pt_poly_distances, 2, min)
 # GET LARGEST CLOSEST DISTANCE (MILES) BETWEEN STOPS AND BOUNDARY
-max_min_BART_EB_dist = max(min_BARTstop_EBboundary_distances)/mile
+max_min_BART_EB_dist = 
+  max(min_BARTstop_EBboundary_distances)/mile
+
 # MINIMUM DISTANCE NEEDED TO BUFFER FROM TRANSIT STOPS AND COVER ALL FOCUS AREAS
+# ASSUMES IN 1/2 or 1 MILE INTERVALS
 buffer_max_distance = ceiling(max_min_BART_EB_dist)
 
 # FUNCTION CREATING MULTIPLE RING BUFFERS FOR TRANSIT STOPS
-ringbuffers_ = function(
-  transit.stops,
-  buffer_interval=.5,
-  buffer_cap=5,
+# CYCLES THROUGH EACH DISTANCE ROW TO BUFFER & UNION
+multiringbuffers_byrow = function(
+  input.points, # BART Stops or any point
+  buffer_distance=.5,
+  buffer_max=5,
+  # default fields & info for union
   union_default = data.frame(
     stop_id=c('ALL'),stop_nm=c('UNION'),
     route_count=c(0),routes=c(''))
-  ){
+){
   mile=5280
+  # SEQUENCE VECTOR OF BUFFER RING LENGTHS
+  buffer_distances = 
+    seq(from=buffer_distance, 
+        to=buffer_max, by=buffer_distance)
   
-  buffer_rings_dists = seq(from=buffer_interval, to=buffer_cap, by=buffer_interval)
-  
-  for (current_buffer_distance in buffer_rings_dists) {
-    
+  # CYCLE THROUGH DISTANCES TO BUFFER EACH POINT
+  # USE ST_DIFFERENCE TO CREATE RINGS
+  # CREATE UNION ROW OF EACH DISTANCE
+  for (current_buffer_distance in buffer_distances) {
+    # GEOM OF SMALLER DISTANCE TO CREATE RING
     buffer.difference = 
-      transit.stops %>% 
-      st_buffer((current_buffer_distance-buffer_interval)*mile) %>% 
-      st_union()
-    
+      input.points %>% 
+        st_buffer(
+          (current_buffer_distance-buffer_distance)*mile
+          ) %>% st_union() %>% st_sfc()
+    # SF BUFFER OF EACH STOP
     buffer.new = 
-      transit.stops %>%
+      input.points %>%
       st_buffer(., current_buffer_distance*mile) %>%
-      st_difference(., buffer.difference) %>%
+        st_difference(., buffer.difference) %>%
       mutate(distance = current_buffer_distance)
     
+    # SF BUFFER UNION FOR NEW ROW 
     buffer.union = 
       buffer.new %>%
-      st_union() %>%
-      st_sf() %>%
-      st_difference(., buffer.difference) %>%
-      mutate(distance=current_buffer_distance) %>%
+        st_union() %>%
+        st_difference(., buffer.difference) %>%
+        st_sfc() %>%
+      # cbind default union fields
+      cbind(
+        ., union_default %>%
+          mutate(distance=current_buffer_distance)
+        ) %>% st_as_sf() %>% 
+      # reorder columns for rbind
       subset(., select=colnames(buffer.new))
     
-    if (current_buffer_distance==.5) {
-      buffer.temp = st_as_sf(rbind(buffer.union, buffer.new))
-    } else buffer.temp = st_as_sf(rbind(buffer.temp, buffer.union, buffer.new))
+    # rbind to all buffers
+    if (current_buffer_distance==buffer_distance) {
+      buffer.temp = 
+        st_as_sf(rbind(
+          buffer.union, 
+          buffer.new))} 
+    else 
+      buffer.temp = 
+      st_as_sf(rbind(
+        buffer.temp, 
+        buffer.union, 
+        buffer.new))
   }
+  # reset index
   row.names(buffer.temp) <- NULL
   return(buffer.temp)
 }
 
+buffer_distance = .5
+BART.buffers = 
+  multiringbuffers_byrow(
+    BART.stops, buffer_distance=buffer_distance,
+    buffer_max=buffer_max_distance)
 
-union_default = data.frame(
-    stop_id=c('ALL'),stop_nm=c('UNION'),
-    route_count=c(0),routes=c(''))
+buffer_distances = 
+  seq(from=buffer_distance, to=buffer_max_distance, by=buffer_distance)
+
+
+plot_limits = function(
+  poly.geometry = EB.cities$geometry,
+  buffer = 0
+  ){
+  poly.bbox = 
+    poly.geometry %>% 
+    st_buffer(buffer) %>% st_union() %>%
+    st_bbox()
+  
+  
+  return(
+    coord_sf(
+      xlim = c(poly.bbox['xmin'], poly.bbox['xmax']),
+      ylim = c(poly.bbox['ymin'], poly.bbox['ymax']),
+      crs = st_crs(poly.geometry)
+    ))
+}
+buffer_breaks = c(0,buffer_distances)
+buffer_labels =
+  c(gsub("0.", ".", buffer_breaks))
+#buffer_breaks = c(buffer_distances,buffer_max_distance+buffer_distance)
 
 ggplot() + 
-  geom_sf(data=EB.cities, fill='grey90') + 
-  geom_sf(data=BART.routes, color='grey20', alpha=.5, lwd=1.5) + 
-  geom_sf(data=buffer.temp[buffer.temp$stop_id=='ALL',], fill='transparent',
-          aes(color=distance), lwd=.75
-          ) + 
-  geom_sf(data=BART.stops, fill='white',
-          color='grey30', shape=21) + 
+  geom_sf(
+    data=EB.cities, fill='grey90') + 
+  geom_sf(
+    data=BART.routes, color='grey20', 
+    alpha=.5, lwd=1.5) + 
+  geom_sf(
+    data=BART.buffers[BART.buffers$stop_id=='ALL',],
+    fill='transparent', aes(color=distance), lwd=.75) + 
+  geom_sf(
+    data=BART.stops, fill='white',
+    color='grey30', shape=21) + 
   scale_color_stepsn(
-    breaks=c(0,buffer_rings_dists), 
-    colors=brewer.pal(11, name='Spectral')) + 
-  mapTheme()
+    #labels = buffer_labels,
+    breaks = buffer_breaks,
+    colors=brewer.pal(length(buffer_breaks),
+                      name='Spectral')) + 
+  mapTheme() + plot_limits()
 
 ```
 
@@ -326,7 +368,7 @@ acs_var = c(
 # FUNCTION TO PULL EACH ACS YEAR'S CENSUS TRACTS
 get_acs_year <- function(acs_year) {
   # TIDY CENSUS PULL
-  #acs_tracts = 
+  #tracts.acs = 
   #    get_acs(
   #      geography = "tract", 
   #      variables = acs_var, 
@@ -338,15 +380,15 @@ get_acs_year <- function(acs_year) {
   filename = gsub(" ","",paste('census', acs_year, '_tracts.geojson'))
   tract_path = file.path(directory, filename)
     
-  acs_tracts = st_read(tract_path) 
+  tracts.acs = st_read(tract_path) 
   
-  acs_tracts = 
-    acs_tracts %>%
+  tracts.acs = 
+    tracts.acs %>%
     dplyr::select( -NAME, -moe) %>%
     spread(variable, estimate)
   # GROUP BY GEOID TO FIX MULTIPOLYGON ISSUE
-  acs_tracts =
-    acs_tracts %>%
+  tracts.acs =
+    tracts.acs %>%
     group_by(GEOID) %>%
     summarise(
       year          = acs_year,
@@ -365,10 +407,10 @@ get_acs_year <- function(acs_year) {
       )
   # REMOVE RAW ACS FIELDS
   non_raw_cols = 
-    colnames(acs_tracts)[!startsWith(colnames(acs_tracts), "B")]
-  acs_tracts = acs_tracts[non_raw_cols]
+    colnames(tracts.acs)[!startsWith(colnames(tracts.acs), "B")]
+  tracts.acs = tracts.acs[non_raw_cols]
   
-  return (acs_tracts)
+  return (tracts.acs)
 }
 
 # ADD ACS EMPLOYMENT FIELDS THAT TIDYCENSUS WOULDN'T IMPORT
@@ -404,14 +446,14 @@ get_acs_subinfo = function(acs_year){
   return(focus_year)
 }
 
-tracts09 = get_acs_year(2009)
-tracts19 = get_acs_year(2019)
+tracts.all = rbind(
+  get_acs_year(2009), 
+  get_acs_year(2019)
+  ) %>% st_as_sf()
 
-alltracts = st_as_sf(rbind(tracts09, tracts19))
-
-acs_info = rbind(get_acs_subinfo(2009), get_acs_subinfo(2019))
-
-alltracts = st_as_sf(merge(alltracts, acs_info, 
+tracts.all = st_as_sf(merge(
+  tracts.all, 
+  rbind(get_acs_subinfo(2009), get_acs_subinfo(2019)), 
                            by = c('GEOID','year')))
 
 ```
@@ -429,26 +471,43 @@ st_erase <- function(x, y) {
 EB.water =
   area_water("CA", "Alameda", class = "sf") %>%
   st_transform(., CA_crs)
-alltracts <- st_erase(alltracts, EB.water)
+tracts.all <- st_erase(tracts.all, EB.water)
 
 # GET CENTROIDS IN EAST BAY
-alltracts.centroid =
-  alltracts[c('GEOID','geometry')] %>%
+tracts.all.centroid =
+  tracts.all[c('GEOID','geometry')] %>%
   # centroid with largest poly to avoid water in city shapes
-  st_centroid(alltracts, of_largest_polygon = TRUE) %>%
-  st_join(., EB.cities, left=TRUE)
-alltracts.centroid = 
-  alltracts.centroid[alltracts.centroid$city %in% is_EB,]
+  st_centroid(tracts.all, of_largest_polygon = TRUE) %>%
+  st_join(., EB.cities, left=TRUE) %>%
+  distinct(GEOID, .keep_all = TRUE)
+tracts.all.centroid = 
+  tracts.all.centroid[tracts.all.centroid$city %in% is_EB,]
 # SELECT TRACTS BY EAST BAY
-center_geoms = alltracts.centroid$GEOID
-alltracts = alltracts[alltracts$GEOID %in% center_geoms,]
+center_geoms = tracts.all.centroid$GEOID
+tracts.all = tracts.all[tracts.all$GEOID %in% center_geoms,]
 
 # ERASE CITIES BY WATER
 EB.cities <- st_erase(EB.cities, EB.water)
 
+min_BART_dist_find = function(tract.pt){
+  dists_bart = sapply(
+    BART.stops$geometry, function(BART_pt) 
+    st_distance(BART_pt, tract.pt))
+  return(min(dists_bart))
+}
+tracts.all.centroid = 
+  tracts.all.centroid %>%
+    mutate(
+      dist_BART = sapply(geometry, min_BART_dist_find))
+
 # CALCULATE NEW COLUMNS BY WEIGHTING & LQ
-alltracts =
-  alltracts %>%
+tracts.all =
+  tracts.all %>%
+  merge(
+    ., 
+    tracts.all.centroid %>% as.data.frame() %>% select(GEOID, city, dist_BART) %>% distinct(.),
+    by='GEOID'
+  ) %>%
   mutate(
     # Location Quotient of Information Industry Employees
     lq_emp_info = 
@@ -458,10 +517,6 @@ alltracts =
       (sum(tot_loc_emp_info) / sum(tot_loc_emp)),
     # area of tract that's not water
     land_area   = st_area(geometry),
-    # population density
-    dens_ppl    = tot_pop/land_area,
-    # housing unit density
-    dens_units  = tot_units /land_area,
     # median rent (in 2009) adjusted by 2019 inflation
     med_rent_inf = 
       ifelse(year == "2009", med_rent * 1.19, med_rent),
@@ -469,18 +524,23 @@ alltracts =
     med_HH_inc_inf = 
       ifelse(year == "2009", med_HH_inc * 1.19, med_HH_inc)
   )
+attributes(tracts.all$land_area) = NULL
+# population per sq mile
+tracts.all$dens_pop    = tracts.all$tot_pop/(tracts.all$land_area/sqmile)
+# housing units per sq mile
+tracts.all$dens_units  = tracts.all$tot_units /(tracts.all$land_area/sqmile)
 
 # PLOT CURRENT DATA
 ggplot() +
   # base tracts
-  geom_sf(data=alltracts, size=.5,
+  geom_sf(data=tracts.all, size=.5,
           color='grey80', fill='grey90') +
   # cities
   geom_sf(data=EB.cities, fill='transparent', 
           color=alpha('grey50',.5),
           lwd=1, linetype = "dashed") + 
   # centroids
-  geom_sf(data=alltracts.centroid, color='grey50', size=.5) +
+  geom_sf(data=tracts.all.centroid, color='grey50', size=.5) +
   # BART routes
   geom_sf(data=BART.routes, color=BART.routes$route_s_nm, lwd=1) + 
   # BART stops
@@ -494,9 +554,9 @@ ggplot() +
   theme(axis.title=element_blank(), 
        axis.text=element_blank(),
        axis.ticks=element_blank()) + 
-  mapTheme()
+  mapTheme() + plot_limits()
 
-at = st_as_sf(alltracts)
+at = st_as_sf(tracts.all)
 
 ```
 
@@ -505,26 +565,18 @@ at = st_as_sf(alltracts)
 
 ```{r 1B.3_TOD}
 
-alltracts = st_as_sf(at)
+tracts.all = st_as_sf(at)
 
 # .5 MILE BUFFERS OF BART STOPS
-BART.buffers <- 
-  rbind(
-    st_buffer(BART.stops, 5280*.5) %>%
-      mutate(Legend = "Buffer") %>%
-      dplyr::select(Legend),
-    st_union(st_buffer(BART.stops, 5280*.5)) %>%
-      st_sf() %>%
-      mutate(Legend = "Unioned Buffer"))
-buffer = filter(BART.buffers, Legend=="Unioned Buffer")
-
-BART.buffers = 
-  BART.buffers[BART.buffers$Legend != 'Buffer',c('geometry')] %>%
-  mutate(distance = .5)
+BART.buffers.TOD = 
+  BART.buffers[
+    BART.buffers$distance == buffer_distance &
+      BART.buffers$stop_id == 'ALL'
+  ,]
 
 # CLIP TRACTS BY BUFFER
 clip = 
-  st_intersection(buffer, alltracts[alltracts$year == 2019,]) %>%
+  st_intersection(BART.buffers.TOD, tracts.all[tracts.all$year == 2019,]) %>%
     dplyr::select(GEOID, land_area) %>%
     mutate(
       # find area that is in the buffer
@@ -536,54 +588,81 @@ clipped = clip[c("GEOID","pct_in_tod","clip_area")]
 clipped$geometry = NULL
 
 # GET TOTAL & PERCENT LAND IN CLIP
-alltracts = 
-  merge(alltracts, clipped, by = "GEOID", all.x = TRUE)
-alltracts[is.na(alltracts$clip_area), 'clip_area'] = 0
-alltracts[is.na(alltracts$pct_in_tod), 'pct_in_tod'] = 0
-alltracts$clip_area = as.vector(alltracts$clip_area)
+tracts.all = 
+  merge(tracts.all, clipped, by = "GEOID", all.x = TRUE)
+tracts.all[is.na(tracts.all$clip_area), 'clip_area'] = 0
+tracts.all[is.na(tracts.all$pct_in_tod), 'pct_in_tod'] = 0
+tracts.all$clip_area = as.vector(tracts.all$clip_area)
 
 # GET OTHER SELECTIONS FOR COMPARING
 selection = 
-  alltracts[buffer,] %>%
+  tracts.all[BART.buffers.TOD,] %>%
     dplyr::select(GEOID, pct_in_tod) %>%
     mutate(
       Selection_Type = "Spatial Selection")
+
 selectCentroids =
-  alltracts.centroid[buffer,] %>%
+  tracts.all.centroid[BART.buffers.TOD,] %>%
     st_drop_geometry() %>%
-    left_join(dplyr::select(alltracts, GEOID, pct_in_tod)) %>%
+    left_join(dplyr::select(tracts.all, GEOID, pct_in_tod)) %>%
     st_sf() %>%
     mutate(
       Selection_Type = "Select by Centroids"
       )
 
 # NARROW DOWN TOD TRACTS BASED ON CLIPPED STOPS BUFFER AREA (% and TOT)
-tod_tracts = as.data.frame(alltracts[
+tod_tracts = as.data.frame(tracts.all[
   # select tracts that had 50% of their land in .5mi stops buffer
-  (alltracts$pct_in_tod>=.5)|
+  (tracts.all$pct_in_tod>=.5)|
   # select tracts that had:
   ( ### at least 20% of their land in the buffer, and
-    (alltracts$pct_in_tod<.5)&
-    (alltracts$pct_in_tod>.20)&
+    (tracts.all$pct_in_tod<.5)&
+    (tracts.all$pct_in_tod>.20)&
     ### at least .01 sq.miles (278,784 )
-    (alltracts$clip_area>278784)
+    (tracts.all$clip_area>278784)
   ),])[,'GEOID']
 
-alltracts$TOD = FALSE
-alltracts[alltracts$GEOID %in% tod_tracts, "TOD"] = TRUE
+tracts.all$TOD = FALSE
+tracts.all[tracts.all$GEOID %in% tod_tracts, "TOD"] = TRUE
+tracts.TOD = tracts.all[tracts.all$TOD==TRUE,]
+
+# SET UP GEOMETRY COLLECTIONS
+focus.points = BART.stops$geometry
+focus.polys = EB.cities %>% 
+    st_convex_hull() %>% 
+    st_cast(., "MULTIPOINT") %>%
+    st_union() %>%
+    st_cast(., "POINT") %>%
+    st_sfc()
+# GET DISTANCES OF TRANSIT STOPS AND THE FOCUS AREA BOUNDARY
+pt_poly_distances = 
+  outer(focus.points,focus.polys,
+        FUN=Vectorize(st_distance, USE.NAMES = FALSE))
+# GET CLOSEST DISTANCES OF TRANSIT STOPS AND THE FOCUS AREA BOUNDARY
+min_BARTstop_EBboundary_distances = 
+  apply(pt_poly_distances, 2, min)
+# GET LARGEST CLOSEST DISTANCE (MILES) BETWEEN STOPS AND BOUNDARY
+max_min_BART_EB_dist = 
+  max(min_BARTstop_EBboundary_distances)/mile
+
 
 
 ggplot() +
+  geom_sf(
+    data=EB.cities, fill='grey90') +
   geom_sf(data=clip, aes(fill=pct_in_tod)) +
   geom_sf(data=selection, aes(fill=pct_in_tod)) +
   geom_sf(data=selectCentroids, aes(fill=pct_in_tod)) +
-  geom_sf(data=BART.buffers, fill='transparent', color='red') + 
+  geom_sf(data=BART.buffers.TOD, fill='transparent', color='red') +
   geom_sf(
-    data=alltracts[(alltracts$pct_in_tod>=.5)|((alltracts$pct_in_tod<.5) & (alltracts$pct_in_tod>.20) & (alltracts$clip_area>278784)), ], fill='transparent', color='black'
+    data=tracts.TOD, fill='transparent', color='black'
           ) + 
   geom_sf(
-    data=alltracts[alltracts$GEOID=='06001400200',], fill='yellow'
-  )+
+    data=tracts.all[tracts.all$GEOID=='06001400200',], fill='yellow'
+  )+ 
+  geom_sf(
+    data=BART.stops, fill='white',
+    color='grey30', shape=21) + 
   scale_fill_steps2(
     low = "red",
     mid = "white",
@@ -592,10 +671,7 @@ ggplot() +
     name='% within TOD buffer'
   ) + 
   facet_wrap(~Selection_Type) + 
-  mapTheme()
-
-
-
+  mapTheme() + plot_limits(poly.geometry = tracts.TOD)
 
 ```
 
@@ -615,14 +691,6 @@ Crime
 
 api_key = "ZtfuhpSK1tX9XxWicYM7ew1lHSPYCF9mI2MnKZdBd"
 
-tracts09 %>% 
-  group_by(GEOID)
-  summarise(st_union(geometry))
-
-t09 <- tracts09 %>%
-  group_by(GEOID, year) %>%
-  summarise(geometry = st_union(.)) %>%
-  summarise_at(vars(-geometry), first)
 
 ```
 
@@ -639,23 +707,79 @@ Median Rent, [Second], [Third], [Fourth]
 
 ```{r 2A_variable1}
 
+qBr <- function(df, variable, rnd) {
+  if (missing(rnd)) {
+    as.character(quantile(round(df[[variable]],0),
+                          c(.01,.2,.4,.6,.8), na.rm=T))
+  } else if (rnd == FALSE | rnd == F) {
+    as.character(formatC(quantile(df[[variable]]), digits = 3),
+                 c(.01,.2,.4,.6,.8), na.rm=T)
+  }
+}
+
+ggplot() + 
+  geom_sf(
+    data=EB.cities, fill='grey90') + 
+  geom_sf(
+    data=BART.routes, color='grey20', 
+    alpha=.5, lwd=1.5) + 
+  geom_sf(
+    data=BART.buffers[BART.buffers$stop_id=='ALL',],
+    fill='transparent', aes(color=distance), lwd=.75) + 
+  geom_sf(
+    data=BART.stops, fill='white',
+    color='grey30', shape=21) + 
+  scale_color_stepsn(
+    #labels = buffer_labels,
+    breaks = buffer_breaks,
+    colors=brewer.pal(length(buffer_breaks),
+                      name='Spectral')) + 
+  mapTheme() + plot_limits()
+
+
 ggplot()+
-  geom_sf(data = EB)+
-  geom_sf(allTracts, aes(fill = qN(population, 5))) +
-  geom_sf(data = BART.buffers, fill = "transparent", color = "red")+
-  scale_fill_manual(values = palette5,
-                    labels = qBr(allTracts.group, "population"),
-                    name = "Population\n(Quintile Breaks, TOD in Red)") +
-  labs(title = "Total Population 2010-2018", subtitle = "Boston, MA", caption="Figure 3.1") +
+  geom_sf(data =    EB.cities,
+    fill='grey90')+
+  geom_sf(data =    tracts.all, 
+    aes(fill = dens_pop)) +
+  geom_sf(data =    BART.buffers, 
+    fill = "transparent", color = "red")+
+  geom_sf(data =    BART.buffers.TOD,
+    fill='transparent', color='red') + 
+
+  scale_fill_manual(
+    values = palette5,
+    labels = qBr(tracts.all.group, "population"),
+    name = "Population\n(Quintile Breaks, TOD in Red)") +
+  labs(
+    title = "Total Population 2010-2018", subtitle = "Boston, MA", caption="Figure 3.1") +
   facet_wrap(~year)+
   mapTheme() + 
   theme(plot.title = element_text(size=15))
+
+
 
 ```
 
 ### 2.B Percent of Median Household Income spent on Rent
 
 ```{r 2B_variable2}
+
+tracts.focus = tracts.all[
+  (tracts.all$year==2019) & 
+    (!is.na(tracts.all[['med_rent']])),]
+
+tracts.lm = lm(med_rent~pct_med_rent, data = tracts.focus)
+
+print(summary(tracts.lm))
+
+ggplot(data=tracts.focus, aes(
+    x=med_rent, 
+    y=pct_med_rent)) +
+  geom_point() +
+  geom_smooth(method=lm, color="red", fill="#69b3a2", se=TRUE)
+
+
 
 ```
 
