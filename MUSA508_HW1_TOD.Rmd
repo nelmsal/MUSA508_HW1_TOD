@@ -129,7 +129,7 @@ BART.routes =
 
 ### 1.A 2 Prepare Transit & East Bay City Boundary Data
 
-Narrowing down Census Tracts & Transit stations to the urban area of the Eastern San Francisco Bay Area *"East Bay"*: Oakland, Berkeley, and the immediate suburban cities of Alameda, Albany, Emeryville, and Albany.*
+Narrowing down Census Tracts & Transit stations to the urban area of the Eastern San Francisco Bay Area *"East Bay"*: Oakland, Berkeley, and the immediate suburban cities of Alameda, Albany, Emeryville, and Albany.\*
 
 ```{r 1A_transit_prep, include = FALSE}
 
@@ -137,6 +137,8 @@ Narrowing down Census Tracts & Transit stations to the urban area of the Eastern
 #city_path = 'https://services3.arcgis.com/i2dkYWmb4wHvYPda/arcgis/rest/services/region_jurisdiction_clp/FeatureServer/0/query?where=1%3D1&outFields=jurname,fipco&outSR=2227&f=geojson'
 city_path = 'C:/Users/nelms/OneDrive/Penn/MUSA-508/Files/EastBay_cities.geojson'
 EB.cities = st_read(city_path) 
+
+#EB.all    = st_read(city_path) %>% st_union(.) %>% st_transform(., CA_crs)
 
 # NARROW AREAS TO MAJOR & MINOR CITIES
 major_EB = c('Berkeley', 'Oakland')
@@ -164,7 +166,7 @@ BART.stops =
   ) %>%
   merge(., BART.stops[,'stop_id'], by='stop_id') %>%
   distinct() %>% # remove duplicates
-  st_as_sf() 
+  st_as_sf()
 
 # NARROW STOPS TO THESE CITIES 
 BART.routes = st_intersection(BART.routes, st_buffer(st_union(EB.cities),5280*.5))
@@ -189,24 +191,51 @@ EB.labels =
 
 buffer_distance = .5
 
-# SET UP GEOMETRY COLLECTIONS
-focus.points = BART.stops$geometry
-focus.polys = EB.cities %>% 
+min_point_distances = function(
+  input.geoms,
+  input.ids,
+  compare.geoms,
+  compare.ids
+){
+  # GET DISTANCES OF TRANSIT STOPS AND THE FOCUS AREA BOUNDARY
+  distances_matrix = 
+    outer(input.geoms,
+          compare.geoms,
+          FUN=Vectorize(st_distance, USE.NAMES = FALSE))
+  
+  # CREATE MATRIX COLUMN & ROW NAMES
+  rownames(distances_matrix) = input.ids
+  colnames(distances_matrix) = compare.ids
+  
+  get_col = function(rowname, find_num){
+    return(colnames(distances_matrix)[distances_matrix[rowname, ] == find_num])
+  }
+  get_col = Vectorize(get_col)
+  distances_df =
+    apply(distances_matrix, 1, min) %>% as.data.frame() %>%
+    rename('distance'=1) %>%
+    rownames_to_column('ID') %>%
+    mutate(closest=get_col(ID, distance))
+  
+  return(distances_df)
+}
+
+EB.coords = EB.cities %>% 
     st_convex_hull() %>% 
     st_cast(., "MULTIPOINT") %>%
     st_union() %>%
-    st_cast(., "POINT") %>%
-    st_sfc()
-# GET DISTANCES OF TRANSIT STOPS AND THE FOCUS AREA BOUNDARY
-pt_poly_distances = 
-  outer(focus.points,focus.polys,
-        FUN=Vectorize(st_distance, USE.NAMES = FALSE))
-# GET CLOSEST DISTANCES OF TRANSIT STOPS AND THE FOCUS AREA BOUNDARY
-min_BARTstop_EBboundary_distances = 
-  apply(pt_poly_distances, 2, min)
+    st_cast(., "POINT")
+
+BARTstop_EBboundary_distances = min_point_distances(
+  input.geoms = EB.coords,
+  input.ids   = seq(from=1,to=length(EB.coords)),
+  compare.geoms = BART.stops$geometry,
+  compare.ids = BART.stops$stop_id
+)
+  
 # GET LARGEST CLOSEST DISTANCE (MILES) BETWEEN STOPS AND BOUNDARY
 max_min_BART_EB_dist = 
-  max(min_BARTstop_EBboundary_distances)/mile
+  max(BARTstop_EBboundary_distances$distance)/mile
 
 # MINIMUM DISTANCE NEEDED TO BUFFER FROM TRANSIT STOPS AND COVER ALL FOCUS AREAS
 # ASSUMES IN 1/2 or 1 MILE INTERVALS
@@ -287,24 +316,26 @@ BART.buffers =
 buffer_distances = 
   seq(from=buffer_distance, to=buffer_max_distance, by=buffer_distance)
 
-
 plot_limits = function(
   poly.geometry = EB.cities$geometry,
-  buffer = 0
-  ){
-  poly.bbox = 
-    poly.geometry %>% 
-    st_buffer(buffer) %>% st_union() %>%
-    st_bbox()
-  
-  
-  return(
-    coord_sf(
-      xlim = c(poly.bbox['xmin'], poly.bbox['xmax']),
-      ylim = c(poly.bbox['ymin'], poly.bbox['ymax']),
-      crs = st_crs(poly.geometry)
-    ))
-}
+  # buffer between plot's limits and the geometry 
+  # (in unit of geometry column)
+  buffer = 0
+  ){
+  # creates bounding box
+  poly.bbox = 
+    poly.geometry %>% st_union() %>%
+    # buffers the geometry so the ultimate plot has margins
+    st_buffer(buffer) %>%
+    st_bbox()
+  return(
+    # returns the 'coord_sf' function which you can add to any plot
+    coord_sf(
+      xlim = c(poly.bbox['xmin'], poly.bbox['xmax']),
+      ylim = c(poly.bbox['ymin'], poly.bbox['ymax']),
+      crs = st_crs(poly.geometry)
+    ))}
+
 buffer_breaks = c(0,buffer_distances)
 buffer_labels =
   c(gsub("0.", ".", buffer_breaks))
@@ -331,8 +362,8 @@ ggplot() +
 
 ```
 
-
 ### 1.B American Community Survey Census Tracts (2009 & 2019)
+
 *Loading Census Tracts & Variables*
 
 ```{r 1B.1_Tracts}
@@ -413,52 +444,53 @@ get_acs_year <- function(acs_year) {
   return (tracts.acs)
 }
 
-# ADD ACS EMPLOYMENT FIELDS THAT TIDYCENSUS WOULDN'T IMPORT
-get_acs_subinfo = function(acs_year){   
-  # local csv
-  directory = 'C:/Users/nelms/OneDrive/Penn/MUSA-508/Files'
-  filename = gsub(" ","",paste('census', acs_year, '_employment.csv'))
-  
-  focus_year = read.csv(file=file.path(directory, filename))
-  focus_year = 
-    focus_year %>%
-    dplyr::select( -NAME, -moe, -X) %>%
-    spread(variable, estimate)
-  focus_year = 
-    focus_year %>%
-    mutate(
-      # total employed people (16yr +)
-      tot_loc_emp = C24050_001, 
-      # total employed people in information sector 
-      # includes (software, tech, media)
-      tot_loc_emp_info = C24050_008, 
-      year = acs_year
-    )
-  # format GEOID like tidycensus
-  focus_year$GEOID = 
-    lapply(as.character(focus_year$GEOID), 
-           function(x) paste('0',x,sep=''))
-  # remove raw census columns
-  non_raw_cols = 
-    colnames(focus_year)[!startsWith(colnames(focus_year), "C")]
-  focus_year = focus_year[non_raw_cols]
-  
-  return(focus_year)
-}
-
+# # ADD ACS EMPLOYMENT FIELDS THAT TIDYCENSUS WOULDN'T IMPORT
+# get_acs_subinfo = function(acs_year){   
+#   # local csv
+#   directory = 'C:/Users/nelms/OneDrive/Penn/MUSA-508/Files'
+#   filename = gsub(" ","",paste('census', acs_year, '_employment.csv'))
+#   
+#   focus_year = read.csv(file=file.path(directory, filename))
+#   focus_year = 
+#     focus_year %>%
+#     dplyr::select( -NAME, -moe, -X) %>%
+#     spread(variable, estimate)
+#   focus_year = 
+#     focus_year %>%
+#     mutate(
+#       # total employed people (16yr +)
+#       tot_emp = C24050_001, 
+#       # total employed people in information sector 
+#       # includes (software, tech, media)
+#       tot_emp_info = C24050_008, 
+#       year = acs_year
+#     )
+#   # format GEOID like tidycensus
+#   focus_year$GEOID = 
+#     lapply(as.character(focus_year$GEOID), 
+#            function(x) paste('0',x,sep=''))
+#   # remove raw census columns
+#   non_raw_cols = 
+#     colnames(focus_year)[!startsWith(colnames(focus_year), "C")]
+#   focus_year = focus_year[non_raw_cols]
+#   
+#   return(focus_year)
+# }
+ 
 tracts.all = rbind(
   get_acs_year(2009), 
   get_acs_year(2019)
   ) %>% st_as_sf()
 
-tracts.all = st_as_sf(merge(
-  tracts.all, 
-  rbind(get_acs_subinfo(2009), get_acs_subinfo(2019)), 
-                           by = c('GEOID','year')))
+# tracts.all = st_as_sf(merge(
+#   tracts.all, 
+#   rbind(get_acs_subinfo(2009), get_acs_subinfo(2019)), 
+#                            by = c('GEOID','year'), all.x = TRUE))
 
 ```
 
 ### 1.B 2 Narrowing to the East Bay
+
 *Select Tracts & Routes, Clip by Water, Calculate Variables*
 
 ```{r 1B.2_EastBay}
@@ -495,26 +527,35 @@ min_BART_dist_find = function(tract.pt){
     st_distance(BART_pt, tract.pt))
   return(min(dists_bart))
 }
+
+tract_bart_distances = min_point_distances(
+  tracts.all.centroid$geometry, tracts.all.centroid$GEOID,
+  BART.stops$geometry, BART.stops$stop_id) %>%
+  rename(GEOID=ID, dist_BART=distance, closest_BART=closest)
+
 tracts.all.centroid = 
   tracts.all.centroid %>%
-    mutate(
-      dist_BART = sapply(geometry, min_BART_dist_find))
+  merge(
+    ., 
+    tract_bart_distances,
+    by='GEOID', all.x = TRUE
+  )
+
+
 
 # CALCULATE NEW COLUMNS BY WEIGHTING & LQ
 tracts.all =
   tracts.all %>%
   merge(
     ., 
-    tracts.all.centroid %>% as.data.frame() %>% select(GEOID, city, dist_BART) %>% distinct(.),
-    by='GEOID'
+    tracts.all.centroid %>% as.data.frame() %>% select(GEOID, city, dist_BART, closest_BART) %>%
+  rename(dist_BART_feet=dist_BART) %>%
+  distinct(.),
+    by='GEOID', all.x = TRUE
   ) %>%
   mutate(
-    # Location Quotient of Information Industry Employees
-    lq_emp_info = 
-      # ratio of info employees to total for tracts "local"
-      (tot_loc_emp_info/tot_loc_emp) / 
-      # ratio of info o total for East Bay "regional"
-      (sum(tot_loc_emp_info) / sum(tot_loc_emp)),
+    # distance to BART by miles
+    dist_BART_miles=dist_BART_feet/mile,
     # area of tract that's not water
     land_area   = st_area(geometry),
     # median rent (in 2009) adjusted by 2019 inflation
@@ -522,13 +563,33 @@ tracts.all =
       ifelse(year == "2009", med_rent * 1.19, med_rent),
     # median rent (in 2009) adjusted by 2019 inflation
     med_HH_inc_inf = 
-      ifelse(year == "2009", med_HH_inc * 1.19, med_HH_inc)
+      ifelse(year == "2009", med_HH_inc * 1.19, med_HH_inc),
+    # total population over housing units
+    pop_units = tot_pop / tot_units
   )
 attributes(tracts.all$land_area) = NULL
 # population per sq mile
 tracts.all$dens_pop    = tracts.all$tot_pop/(tracts.all$land_area/sqmile)
 # housing units per sq mile
 tracts.all$dens_units  = tracts.all$tot_units /(tracts.all$land_area/sqmile)
+
+# for (yr in c(2019,2009)){
+#   tracts.all[tracts.all$year==yr & !is.na(tracts.all$tot_emp),
+#              'tot_EB_emp'] = sum(tracts.all[tracts.all$year==yr & !is.na(tracts.all$tot_emp)
+#                                             ,][['tot_emp']])
+#   tracts.all[tracts.all$year==yr & !is.na(tracts.all$tot_emp_info),
+#              'tot_EB_emp_info'] = sum(tracts.all[tracts.all$year==yr & !is.na(tracts.all$tot_emp_info)
+#                                                  ,][['tot_emp_info']])
+#   # LOCATION QUOTIENT for information industry employees in the East Bay area
+#   tracts.all[tracts.all$year==yr & !is.na(tracts.all$tot_emp),] = 
+#     tracts.all[tracts.all$year==yr & !is.na(tracts.all$tot_emp),] %>%
+#     mutate(
+#       lq_emp_info = 
+#         # ratio of info employees to total for tracts "local"
+#         (tot_emp_info/tot_emp) / 
+#         # ratio of info o total for East Bay "regional"
+#         (tot_EB_emp_info / tot_EB_emp)
+#     )}
 
 # PLOT CURRENT DATA
 ggplot() +
@@ -556,16 +617,52 @@ ggplot() +
        axis.ticks=element_blank()) + 
   mapTheme() + plot_limits()
 
-at = st_as_sf(tracts.all)
+BART.stops = 
+  BART.stops %>%
+  mutate(
+    lon = map_dbl(geometry, ~st_centroid(.x)[[1]]),
+    lat = map_dbl(geometry, ~st_centroid(.x)[[2]])
+  ) 
+
+# PLOT CURRENT DATA
+ggplot() +
+  # base tracts
+  geom_sf(data=tracts.all, size=.5,
+          color='grey80', fill='grey90') +
+  # Tracts BART
+  geom_sf(
+    data=tracts.all[tracts.all$year==2019,], color=alpha('black',.1),
+    aes(
+      fill=tracts.all[tracts.all$year==2019,]$closest_BART, 
+      alpha=tracts.all[tracts.all$year==2019,]$dist_BART_miles)) + 
+  # BART stops
+  geom_sf(data=BART.stops,
+          color='black', shape=19, size=1) + 
+  # labels
+  geom_text(
+    data=BART.stops, check_overlap=TRUE,
+    size = 3, fontface=2, color='grey20',
+    aes(
+      x=lon+4000,
+      y=lat, label=stop_id)) + 
+  scale_fill_discrete(name="Closest BART") + 
+  scale_alpha_continuous(breaks=c(.5,1,1.5,2), name="Distance", range=c(1,0)) + 
+  theme(axis.title=element_blank(), 
+       axis.text=element_blank(),
+       axis.ticks=element_blank()) + 
+  mapTheme() + plot_limits()
+
+#at = st_as_sf(tracts.all)
 
 ```
 
 ## 1.B 3 Finding TOD Areas
+
 *Buffering Transit (BART) Stops then Select Census Tracts by Area in TOD*
 
 ```{r 1B.3_TOD}
 
-tracts.all = st_as_sf(at)
+#tracts.all = st_as_sf(at)
 
 # .5 MILE BUFFERS OF BART STOPS
 BART.buffers.TOD = 
@@ -635,12 +732,12 @@ focus.polys = EB.cities %>%
     st_cast(., "POINT") %>%
     st_sfc()
 # GET DISTANCES OF TRANSIT STOPS AND THE FOCUS AREA BOUNDARY
-pt_poly_distances = 
+distances_matrix = 
   outer(focus.points,focus.polys,
         FUN=Vectorize(st_distance, USE.NAMES = FALSE))
 # GET CLOSEST DISTANCES OF TRANSIT STOPS AND THE FOCUS AREA BOUNDARY
 min_BARTstop_EBboundary_distances = 
-  apply(pt_poly_distances, 2, min)
+  apply(distances_matrix, 2, min)
 # GET LARGEST CLOSEST DISTANCE (MILES) BETWEEN STOPS AND BOUNDARY
 max_min_BART_EB_dist = 
   max(min_BARTstop_EBboundary_distances)/mile
@@ -653,7 +750,7 @@ ggplot() +
   geom_sf(data=clip, aes(fill=pct_in_tod)) +
   geom_sf(data=selection, aes(fill=pct_in_tod)) +
   geom_sf(data=selectCentroids, aes(fill=pct_in_tod)) +
-  geom_sf(data=BART.buffers.TOD, fill='transparent', color='red') +
+  geom_sf(data=BART.buffers.TOD, fill='transparent', color='red', lwd=1) +
   geom_sf(
     data=tracts.TOD, fill='transparent', color='black'
           ) + 
@@ -674,7 +771,6 @@ ggplot() +
   mapTheme() + plot_limits(poly.geometry = tracts.TOD)
 
 ```
-
 
 ```{r}
 
@@ -702,62 +798,113 @@ api_key = "ZtfuhpSK1tX9XxWicYM7ew1lHSPYCF9mI2MnKZdBd"
 
 Median Rent, [Second], [Third], [Fourth]
 
-### 2.A Population Density 
+### 2.A Population Density
+
 *People per Square Foot (of Land Area)*
 
+
+
 ```{r 2A_variable1}
+options(scipen=999)
 
-qBr <- function(df, variable, rnd) {
-  if (missing(rnd)) {
-    as.character(quantile(round(df[[variable]],0),
-                          c(.01,.2,.4,.6,.8), na.rm=T))
-  } else if (rnd == FALSE | rnd == F) {
-    as.character(formatC(quantile(df[[variable]]), digits = 3),
-                 c(.01,.2,.4,.6,.8), na.rm=T)
-  }
-}
+# EB.water =
+#   area_water("CA", "Alameda", class = "sf") %>%
+#   st_transform(., CA_crs)
+#EB.all = st_read(city_path) %>% st_union(.) %>% st_transform(., CA_crs) %>% st_buffer(10) %>% st_buffer(-10) 
+   #%>% st_erase(., EB.water)
+#EB.back_water = BART.stops %>% st_buffer(40*mile) %>% st_union() %>% st_erase(., EB.all)
 
-ggplot() + 
-  geom_sf(
-    data=EB.cities, fill='grey90') + 
-  geom_sf(
-    data=BART.routes, color='grey20', 
-    alpha=.5, lwd=1.5) + 
-  geom_sf(
-    data=BART.buffers[BART.buffers$stop_id=='ALL',],
-    fill='transparent', aes(color=distance), lwd=.75) + 
+plot_vari = function(
+  focus_sf  = tracts.all,
+  variable  = "dens_pop",
+  qbreaks   = qBr(tracts.all, variable),
+  sep = 1,
+  title     = "Population Density 2009-2019", 
+  subtitle  = "East Bay with ½ mile buffer from BART stations",
+  legend_nm = variable,
+  caption   = "Map 2.A",
+  brewer_colors = 'Spectral',
+  dig=0,
+  last_cut=TRUE,
+  last_variable='',
+  last_suffix='',
+  buff_col='red',
+  col_rev=FALSE
+){
+
+focus_sf$cut_field = 
+  focus_sf[[variable]] %>% 
+  cut(., 
+      breaks = qbreaks, dig.lab=10)
+  
+focus_sf = focus_sf %>%drop_na(cut_field)
+
+cut_breaks <- sapply(focus_sf$cut_field, 
+                  function(brk) brk %>% levels())
+
+labels = cut_breaks %>%
+  gsub(",", " to ", .) %>% str_sub(., 2, -2)
+labels = unique(labels)
+num = length(qbreaks)-1
+
+for (i in seq(from=1,to=length(labels))){
+  llist = labels[i] %>% str_split(., " to ")
+  print(llist)
+  
+  lstr = function(l, remove=0){format(round(as.numeric(l), digit=dig)-remove, big.mark=",")}
+           
+  if (i == length(labels)){
+    if (last_cut==FALSE || last_variable!=''){
+      cap = lstr(llist[[1]][2], remove=sep)
+      if (last_variable!=''){cap=last_variable}
+      labels[i] = str_trim(paste(lstr(llist[[1]][1]), 'to', cap, last_suffix))}
+    else {
+      labels[i] = str_trim(paste(lstr(llist[[1]][1]), '+'))}
+  } else if (i == 1){
+    labels[i] = str_trim(paste(0, 'to', lstr(llist[[1]][2], remove=sep), last_suffix))
+  } else {
+    labels[i] = str_trim(paste(lstr(llist[[1]][1]), 'to', lstr(llist[[1]][2], remove=sep), last_suffix))
+  }}
+col_vals =brewer.pal(num, name=brewer_colors)
+if (col_rev==TRUE){col_vals=rev(col_vals)}
+return(
+ggplot()+
+  # geom_sf(data = EB.all, fill=alpha('grey50', .5), color=alpha('grey50', .5)) + 
+  # geom_sf(data = EB.back_water, fill=alpha('cornflowerblue', .5), color='transparent') + 
+  geom_sf(data  = EB.cities, fill='grey90')+
+  geom_sf(data  = focus_sf, aes(fill    = cut_field), color='grey50') +
+  
+  scale_fill_manual(
+    values=col_vals,
+    labels = labels, name=legend_nm) +
+  geom_sf(data=BART.buffers.TOD, fill='transparent', color=alpha(buff_col, alpha=.75), lwd=.75) +
   geom_sf(
     data=BART.stops, fill='white',
     color='grey30', shape=21) + 
-  scale_color_stepsn(
-    #labels = buffer_labels,
-    breaks = buffer_breaks,
-    colors=brewer.pal(length(buffer_breaks),
-                      name='Spectral')) + 
-  mapTheme() + plot_limits()
-
-
-ggplot()+
-  geom_sf(data =    EB.cities,
-    fill='grey90')+
-  geom_sf(data =    tracts.all, 
-    aes(fill = dens_pop)) +
-  geom_sf(data =    BART.buffers, 
-    fill = "transparent", color = "red")+
-  geom_sf(data =    BART.buffers.TOD,
-    fill='transparent', color='red') + 
-
-  scale_fill_manual(
-    values = palette5,
-    labels = qBr(tracts.all.group, "population"),
-    name = "Population\n(Quintile Breaks, TOD in Red)") +
-  labs(
-    title = "Total Population 2010-2018", subtitle = "Boston, MA", caption="Figure 3.1") +
+  # geom_text(
+  #   data=EB.labels, check_overlap=TRUE,
+  #   size = 3.5, fontface='bold', color='black',
+  #   aes(x=lon,y=lat, label=label)) + 
+  labs(title = title, subtitle = subtitle,
+       caption=caption) +
+  guides(fill = guide_legend(reverse=T)) + 
   facet_wrap(~year)+
-  mapTheme() + 
-  theme(plot.title = element_text(size=15))
-
-
+  mapTheme() + plot_limits()
+)}
+variable  = "dens_pop"
+breaks = c(0, 10000,20000,30000, max(tracts.all[[variable]]))
+#breaks = c(0, 1,2,5, max(tracts.all[[variable]]))
+#breaks = seq(0, max(tracts.all[[variable]]), length.out = 5)
+plot_vari(
+  focus_sf  = tracts.all[!is.null(tracts.all[[variable]]),],
+  variable  = variable,
+  qbreaks   = breaks,
+  title     = "Population Density 2009-2019", 
+  caption   = "Map 2.A",
+  brewer_colors = 'BuPu',
+  legend_nm = "People per Sq.Mile\nof Tract Land Area",
+  last_variable='60,000'
+)
 
 ```
 
@@ -765,21 +912,26 @@ ggplot()+
 
 ```{r 2B_variable2}
 
-tracts.focus = tracts.all[
-  (tracts.all$year==2019) & 
-    (!is.na(tracts.all[['med_rent']])),]
+variable  = "pct_med_rent"
 
-tracts.lm = lm(med_rent~pct_med_rent, data = tracts.focus)
-
-print(summary(tracts.lm))
-
-ggplot(data=tracts.focus, aes(
-    x=med_rent, 
-    y=pct_med_rent)) +
-  geom_point() +
-  geom_smooth(method=lm, color="red", fill="#69b3a2", se=TRUE)
-
-
+filt_sf = tracts.all[which( !is.na(tracts.all[[variable]]), arr.ind=TRUE),]
+mx = max(filt_sf[[variable]])
+#breaks = seq(0, mx, length.out = 6)
+#breaks = c(0, 10000,20000,30000, mx)
+breaks = c(0, 10,20,30,40, mx)
+plot_vari(
+  focus_sf  = filt_sf,
+  variable  = variable,
+  qbreaks   = breaks,
+  title     = "Percent of Income Spent on Rent 2009-2019", 
+  caption   = "Map 2.B",
+  brewer_colors = 'RdYlGn',
+  legend_nm = "% of Median Income\nSpent on Rent",
+  last_variable='50',
+  last_suffix='%',
+  col_rev=TRUE,
+  buff_col='blue'
+)
 
 ```
 
@@ -787,14 +939,66 @@ ggplot(data=tracts.focus, aes(
 
 ```{r 2C_variable3}
 
+variable  = "pct_moved"
+
+filt_sf = tracts.all[!is.na(tracts.all[[variable]]),]
+filt_sf = filt_sf %>%   
+  transform(., pct_moved=as.numeric(pct_moved))
+
+filt_sf[[variable]] = filt_sf[[variable]] * 100
+mx = max(filt_sf[[variable]])
+#breaks = seq(0, mx, length.out = 5)
+breaks = c(0, 15, 30, 45, mx)
+
+plot_vari(
+  focus_sf  = filt_sf,
+  variable  = variable,
+  qbreaks   = breaks,
+  sep=1,
+  dig=2,
+  title     = "Percent of Population that Moved in Last Year 2009-2019", 
+  caption   = "Map 2.C",
+  brewer_colors = 'PuRd',
+  legend_nm = "% of Population that did not\nreside in their current house\n a year ago",
+  last_variable='90',
+  last_suffix='%',
+  col_rev=FALSE
+)
+
 ```
 
 ### 2.D Location Quotient of People employed in the Information Industry
-*Ratio of the amount of Information industry employees (e.g. software, technology, & media companies)*
-*to the total amount of employees — both in the Census Tract & Region (East Bay)*
+
+*Ratio of the amount of Information industry employees (e.g. software, technology, & media companies)* *to the total amount of employees — both in the Census Tract & Region (East Bay)*
 
 ```{r 2D_variable4}
 
+# tracts.all = tracts.all %>%   
+#   mutate(pct_emp_info = (tot_emp_info/tot_emp)*100)
+#   #transform(., lq_emp_info=as.numeric(lq_emp_info))
+
+variable  = "pct_emp_info"
+
+filt_sf = tracts.all[!is.na(tracts.all[[variable]]),]
+
+mx = max(filt_sf[[variable]])
+#breaks = seq(0, mx, length.out = 6)
+breaks = c(0, 5, 10, 15, 20,mx)
+
+plot_vari(
+  focus_sf  = filt_sf,
+  variable  = variable,
+  qbreaks   = breaks,
+  sep=1,
+  dig=1,
+  title     = "Percent of Employed Residents in the Information Industry 2009-2019", 
+  caption   = "Map 2.D",
+  brewer_colors = 'OrRd',
+  legend_nm = "% of Information Industry Employees\nout of all Employed Residents\ne.g. Technology, Software, Media",
+  last_variable='30',
+  last_suffix='%',
+  buff_col='Black'
+)
 ```
 
 ------------------------------------------------------------------------

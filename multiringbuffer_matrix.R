@@ -108,3 +108,24 @@ input.transpose$distance = gsub('X', '', input.transpose$distance)
 input.transpose$distance = as.numeric(input.transpose$distance)
 
 # ********************************
+
+qBr <- function(
+  df, variable, round=3, probs=c(.01,.2,.4,.6,.8)
+                ) {
+  field = df[[variable]]
+  quants = quantile(
+    field, probs = probs, 
+    na.rm=T) %>% 
+    round(., digits=round)
+  return(as.vector(quants))
+}
+
+labeling = function(breaks){return(
+  format(as.list(breaks),
+         digits=ifelse(min(breaks)>=1, 0, 2),
+         big.mark=",",scientific=FALSE))}
+
+label_cut = function(breaks_cut){
+  
+  return(labels)
+}
