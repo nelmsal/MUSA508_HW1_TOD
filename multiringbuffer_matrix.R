@@ -129,3 +129,25 @@ label_cut = function(breaks_cut){
   
   return(labels)
 }
+
+# ***********
+# TEST
+
+# SET UP GEOMETRY COLLECTIONS
+focus.points = BART.stops$geometry
+focus.polys = EB.cities %>% 
+    st_convex_hull() %>% 
+    st_cast(., "MULTIPOINT") %>%
+    st_union() %>%
+    st_cast(., "POINT") %>%
+    st_sfc()
+# GET DISTANCES OF TRANSIT STOPS AND THE FOCUS AREA BOUNDARY
+distances_matrix = 
+  outer(focus.points,focus.polys,
+        FUN=Vectorize(st_distance, USE.NAMES = FALSE))
+# GET CLOSEST DISTANCES OF TRANSIT STOPS AND THE FOCUS AREA BOUNDARY
+min_BARTstop_EBboundary_distances = 
+  apply(distances_matrix, 2, min)
+# GET LARGEST CLOSEST DISTANCE (MILES) BETWEEN STOPS AND BOUNDARY
+max_min_BART_EB_dist = 
+  max(min_BARTstop_EBboundary_distances)/mile
