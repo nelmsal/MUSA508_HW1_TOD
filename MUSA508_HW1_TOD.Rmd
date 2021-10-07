@@ -1,19 +1,50 @@
 ---
 title: "Assignment 1: Oakland's TOD"
 author: "Alex Nelms"
-date: "9/8/2021"
-output: github_document
+date: "10/5/2021"
+output: 
+  bookdown::html_document2: 
+    code_folding: hide
+    fig_caption: yes
+    toc: yes
 editor_options: 
   markdown: 
     wrap: sentence
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+library(bookdown)
+knitr::opts_chunk$set(
+  echo=TRUE,
+  include=TRUE,
+  warning=FALSE,
+  messages=FALSE,
+  fig.width = 8,
+  fig.keep = 'all',
+  collapse=TRUE
+  )
 options(tigris_class = "sf")
 ```
 
-```{r setup_package, warning = FALSE, message = FALSE}
+# The East Bay & Transit Oriented Developments {-}
+
+**A Study of the Bay Area Rapid Transit and the Major Cities in the Eastern part of the San Francisco Bay Area**
+
+The San Francisco Bay Area's East Bay Housing Crisis is the resulting clash of strict land-use regulations, racial housing discrimination, and missing regional government with the explosive growth of the technology industry. This mismatch has led to increasing rent, homelessness, and *'gentrification'* on a crisis-level scale.
+
+Even though the Bay Area's economy has grew to become the [18th largest economy in the world in 2017][1], the housing market has not. Also ratified in 2017 was the region's [Plan Bay Area 2040][2] — which had bay area cities set 2040 housing targets. Two cities at the heart of the plan, Oakland and Berkeley, are already forecasted to meet their 2040 targets [far beyond 2070][3]. 
+
+> "Every single county is over-performing its job forecast, some by massive amounts, and every single county is under-performing its housing forecast, almost all by a wide margin,"
+>
+>  --- *MTC director Steve Heminger in his [report to the Association of Bay Area Governments executive board][4]*
+
+The East Bay has been at the center of this mismatch, especially for the urban corridor [Figure 1] of Oakland, Berkeley, and immediate surrounding cities: Alameda, Piedmont, Albany, & Emeryville. The urban East Bay, between the 2009 and 2019 American Community Surveys, added 62,869 residents (10% increase) but could only add 799 occupied housing units (.003% increase). This mismatch of added population without a real increase in units suggests two questions to follow throughout the study: 
+ + Where are new residents locating? Are they living in new or old units?  
+ + What variables describe the change in new or old residents between 2009 and 2019?
+ 
+```{r setup_EB, fig.cap="East Bay Cities"}
+
 library(tidyverse)
 library(lubridate)
 library(RColorBrewer)
@@ -28,8 +59,11 @@ library(tmap)
 library(ggrepel)
 library(tigris)
 
-
-
+# tracts.all %>% group_by(year) %>%
+#   summarize(
+#     units = sum(tot_units),
+#     pop = sum(tot_pop)
+#   )
 
 mile = 5280
 sqmile = 27878400
@@ -84,23 +118,98 @@ plotTheme <- function(base_size = 12) {
 key_file = "C:/Users/nelms/OneDrive/Code/census_api_key.txt"
 census_key = readChar(key_file, file.info(key_file)$size)
 census_api_key(census_key, overwrite = TRUE)
+
+# PULL CITY BOUNDARIES FROM REGIONAL MTC OPEN DATA
+#city_path = 'https://services3.arcgis.com/i2dkYWmb4wHvYPda/arcgis/rest/services/region_jurisdiction_clp/FeatureServer/0/query?where=1%3D1&outFields=jurname,fipco&outSR=2227&f=geojson'
+city_path = 'C:/Users/nelms/OneDrive/Penn/MUSA-508/Files/EastBay_cities.geojson'
+EB.cities = st_read(city_path) 
+
+# NARROW AREAS TO MAJOR & MINOR CITIES
+major_EB = c('Berkeley', 'Oakland')
+minor_EB = c('Alameda', 'Albany', 'Emeryville', 'Piedmont')
+is_EB = c(minor_EB, major_EB)
+EB.cities = EB.cities[match(is_EB, EB.cities$jurname), ] %>%
+  select( -fipco) %>%
+  rename(
+    city = jurname
+  ) %>%
+  st_transform(., 2227)
+
+# Projection is (NAD83) California State Plan, Zone 3 (in FEET)
+# EPSG:2226
+CA_crs = st_crs(EB.cities)
+
+EB.cities$size = 'minor'
+EB.cities[EB.cities$city %in% major_EB, 'size'] = 'major'
+
+# CREATE CITY LABELS
+EB.labels = 
+  EB.cities %>%
+  st_centroid(EB.cities) %>%
+  rename(
+    label = city
+  ) %>%
+  mutate(
+       lon = map_dbl(geometry, ~st_centroid(.x)[[1]]),
+       lat = map_dbl(geometry, ~st_centroid(.x)[[2]])
+     )
+
+plot_limits = function(
+  poly.geometry = EB.cities$geometry,
+  # buffer between plot's limits and the geometry 
+  # (in unit of geometry column)
+  buffer = 0
+){
+  # creates bounding box
+  poly.bbox =
+    poly.geometry %>% st_union() %>%
+    # buffers the geometry so the ultimate plot has margins
+    st_buffer(buffer) %>%
+    st_bbox()
+  return(
+    # returns the 'coord_sf' function which you can add to any plot
+    coord_sf(
+      xlim = c(poly.bbox['xmin'], poly.bbox['xmax']),
+      ylim = c(poly.bbox['ymin'], poly.bbox['ymax']),
+      crs = st_crs(poly.geometry)
+  ))}
+
+ggplot() +
+  # cities
+  geom_sf(data=EB.cities, aes(fill=city), 
+          color=alpha('grey50',.5),
+          lwd=1, linetype = "dashed") + 
+  # labels
+  geom_label(
+    data=EB.labels,
+    size = 2, fontface='bold', color='grey20', label.size = NA,
+    box.padding = 0.5, fill=alpha('white',.5),
+    aes(x=lon,y=lat, label=label)) + 
+  labs(
+    title = 'East Bay Urban Corridor',
+    subtitle = 'Oakland, Berkeley, & surrounding cities') +
+  mapTheme() + plot_limits()
+
 ```
 
-# Bay Area Rapid Transit (BART) in the East Bay
+The following study examines some of the surface level indicators of the housing crisis and its resulting displacement. The study will focus on Transit Oriented Developments around Bay Area Rapid Transit stations --- specifically, to understand if TOD housing is relieving the housing crisis or exacerbating the displacement of local residents. The study will: (Section \@ref(section1)) establish the variables and parameters; (Section \@ref(section2)) spatially compare five American Community Survey (ACS) variables between 2009 and 2019; (Section \@ref(section3) & Section \@ref(section4)) make overall comparisions of TOD and non-TOD areas; (Section \@ref(section5)) utilize graduated symbol maps to evaluate specific station TOD areas; (Section \@ref(section6)) compare the distance to BART to both Mean Rent and the Amount of Homeless Encampment complaints; and, finally, (Section \@ref(section7)) evaluate all of the study components to give a picture of the East Bay housing crisis. 
 
-### A Transit Oriented Development Study
+[1]: <http://www.bayareaeconomy.org/bay-area-gdp-surges-in-2017-now-worlds-18th-largest-economy/> "Bay Area 2017 GDP"
+[2]: <http://2040.planbayarea.org/> "Plan Bay Area 2040"
+[3]: https://mtc.ca.gov/node/125196> "Plan Bay Area 2040: Housing Forecast Update"
+[4]: <https://web.archive.org/web/20180706121145/https://www.sfgate.com/bayarea/article/bay-area-housing-shortage-how-long-to-fix-mtc-13034136.php> "Article on Steve Heminger & Bay Area Housing Crisis"
 
 ------------------------------------------------------------------------
 
-## 1. Data Wrangling
+# Variables & Parameters {#section1}
 
-### 1.A.1 Transit Routes & Stops
+This study is bringing in three primary data sources: (\@ref(section1A)) the San Francisco Bay Area's hybrid subway-commuter rail, the Bay Area Rapid Transit (BART), to find TOD areas; (\@ref(section1B)) American Community Survey (ACS) Variables & Census Tracts to get core information; and (\@ref(section1C)) bring in Homeless Encampment complaints from the City of Oakland's 311 citizen hotline.
 
-Transit Routes & Stops are for the Bay Area Regional Transit, the San Francisco Bay Area's hybrid subway-commuter rail.
-Looking at this transportation system allows us to focus on both urban cetners and their immediate suburbs.
-The data was sourced from the regional [Metropolitan Transportation Commission](https://opendata.mtc.ca.gov/ "MTC Open Data Portal").
+## Transit Routes & Stops {#section1A}
 
-```{r 1A1_transit_import, include=FALSE}
+This study's use of BART allows a focus on both urban centers and their immediate suburbs. The data was sourced from the regional [Metropolitan Transportation Commission](https://opendata.mtc.ca.gov/ "MTC Open Data Portal").
+
+```{r 1A1_transit_import, warning = FALSE, message = FALSE}
 
 #stop_path = "https://services3.arcgis.com/i2dkYWmb4wHvYPda/arcgis/rest/services/transitstops_existing_planned_2021/FeatureServer/0/query?where=1%3D1&outFields=*&outSR=2227&f=geojson"
 stop_path = 'C:/Users/nelms/OneDrive/Penn/MUSA-508/Files/SF-Bay_Transit-Stops-Major_2021.geojson'
@@ -134,33 +243,6 @@ BART.routes =
       route_s_nm)
   ) %>%
   st_transform(., CA_crs)
-```
-
-### 1.A.2 Prepare Transit & East Bay City Boundary Data
-
-Narrowing down Census Tracts & Transit stations to the urban area of the Eastern San Francisco Bay Area *"East Bay"*: Oakland, Berkeley, and the immediate suburban cities of Alameda, Albany, Emeryville, and Albany.\*
-
-```{r 1A2_transit_prep, include = FALSE}
-
-# PULL CITY BOUNDARIES FROM REGIONAL MTC OPEN DATA
-#city_path = 'https://services3.arcgis.com/i2dkYWmb4wHvYPda/arcgis/rest/services/region_jurisdiction_clp/FeatureServer/0/query?where=1%3D1&outFields=jurname,fipco&outSR=2227&f=geojson'
-city_path = 'C:/Users/nelms/OneDrive/Penn/MUSA-508/Files/EastBay_cities.geojson'
-EB.cities = st_read(city_path) 
-
-#EB.all    = st_read(city_path) %>% st_union(.) %>% st_transform(., CA_crs)
-
-# NARROW AREAS TO MAJOR & MINOR CITIES
-major_EB = c('Berkeley', 'Oakland')
-minor_EB = c('Alameda', 'Albany', 'Emeryville', 'Piedmont')
-is_EB = c(minor_EB, major_EB)
-EB.cities = EB.cities[match(is_EB, EB.cities$jurname), ] %>%
-  select( -fipco) %>%
-  rename(
-    city = jurname
-  ) %>%
-  st_transform(., CA_crs)
-EB.cities$size = 'minor'
-EB.cities[EB.cities$city %in% major_EB, 'size'] = 'major'
 
 # NARROW STOPS TO .5 MILE OUTSIDE THESE CITIES
 BART.stops =
@@ -180,23 +262,11 @@ BART.stops =
 # NARROW STOPS TO THESE CITIES 
 BART.routes = st_intersection(BART.routes, st_buffer(st_union(EB.cities),5280*.5))
 
-# CREATE CITY LABELS
-EB.labels = 
-  EB.cities %>%
-  st_centroid(EB.cities) %>%
-  rename(
-    label = city
-  ) %>%
-  mutate(
-       lon = map_dbl(geometry, ~st_centroid(.x)[[1]]),
-       lat = map_dbl(geometry, ~st_centroid(.x)[[2]])
-     )
-
 ```
 
-### 1.A.3 1/2 Mile Buffers of BART Stops
+The BART stations will serve as the center of TOD areas --- with the ultimate area being tracts mostly within a ½ mile buffer of BART. See Figure 1.1 & 1.2 in Section \@ref(section1B), for a graphical understanding of this selection.
 
-```{r 1A3_Buffers, echo=FALSE}
+```{r 1A2_Buffers}
 
 buffer_distance = .5
 
@@ -325,40 +395,29 @@ BART.buffers =
 buffer_distances = 
   seq(from=buffer_distance, to=buffer_max_distance, by=buffer_distance)
 
-plot_limits = function(
-  poly.geometry = EB.cities$geometry,
-  # buffer between plot's limits and the geometry 
-  # (in unit of geometry column)
-  buffer = 0
-){
-  # creates bounding box
-  poly.bbox =
-    poly.geometry %>% st_union() %>%
-    # buffers the geometry so the ultimate plot has margins
-    st_buffer(buffer) %>%
-    st_bbox()
-  return(
-    # returns the 'coord_sf' function which you can add to any plot
-    coord_sf(
-      xlim = c(poly.bbox['xmin'], poly.bbox['xmax']),
-      ylim = c(poly.bbox['ymin'], poly.bbox['ymax']),
-      crs = st_crs(poly.geometry)
-  ))}
 
 buffer_breaks = c(0,buffer_distances)
 buffer_labels =
   c(gsub("0.", ".", buffer_breaks))
 #buffer_breaks = c(buffer_distances,buffer_max_distance+buffer_distance)
 
-
-
 ```
 
-### 1.B.1 American Community Survey Census Tracts (2009 & 2019)
+## American Community Survey Census Tracts {#section1B}
 
-*Loading Census Tracts & Variables*
+This study is using Census Tracts & Transit stations in the urban area of the Eastern San Francisco Bay Area *"East Bay"*: Oakland, Berkeley, and the immediate suburban cities of Alameda, Albany, Emeryville, and Albany.
 
-```{r 1B1_Tracts, echo=FALSE, warning=FALSE}
+The census tracts are for the ACS years of 2009 and 2019 -- which allows us to have a 10-year comparision. There are 6 primary variables that are pulled from the ACS, which can all be seen in Sections \@ref(section3) & \@ref(section4), or listed below:
+ + Total Population (\@ref(section5A)), 
+ + Median Gross Rent *(includes Utilities costs)* (\@ref(section2B) & \@ref(section5B)),
+ + People per Occupied Housing Unit (\@ref(section2A));
+ + Percent of Income Spent on Rent (\@ref(section2C));
+ + Percent of Residents between the ages of 22 and 34 (\@ref(section2D)); and
+ + Percent of Residents Employed in the Information industry *(e.g. Software, Technology, Media)* (\@ref(section2E)).
+
+```{r 1B1}
+
+#View(load_variables(2009, "acs5", cache = TRUE))
 
 # ACS VARIABLES TO FOCUS ON
 acs_var = c(
@@ -368,6 +427,7 @@ acs_var = c(
   
   #"B25001_001", # housing units # SOMETHING WRONG
   #"B25008_001", # occupied housing units
+  'B25002_003', # vacant housing units
   
   "B25058_001", # Median Contract rent
   "B25064_001", # Median gross rent
@@ -443,7 +503,7 @@ get_acs_year <- function(acs_year) {
       med_rent_util = first(B25064_001),
       tot_units     = ifelse(acs_year==2019,
           first(B07013_002)+first(B07013_003),
-          first(B25008_002)+first(B25008_003)),
+          first(B25008_002)+first(B25008_003)), #+ first(B25002_003),
       pct_60m_commute = first(B08135_010) / first(B08135_001), 
       tot_22_34yo   = first(B01001_010) + first(B01001_011) + first(B01001_012) 
         + first(B01001_034) + first(B01001_035) + first(B01001_036),
@@ -506,11 +566,9 @@ tracts.all = merge(
 
 ```
 
-### 1.B.2 Narrowing to the East Bay
+Figure 1.1 highlights (1) the Easy Bay cities in comparison to BART stations, (2) the ½ mile buffers that extend out of those stations, and (3) the closest station to each census tract's centroid.
 
-*Select Tracts & Routes, Clip by Water, Calculate Variables*
-
-```{r 1B2_EastBay, echo=FALSE}
+```{r 1B2, fig.cap="East Bay Cities, BART Station .5 mile Buffers, & Closest Station to Census Tracts"}
 
 # CREATE ERASE FUNCTION
 st_erase <- function(x, y) {
@@ -588,23 +646,8 @@ tracts.all$dens_units  = tracts.all$tot_units /(tracts.all$land_area/sqmile)
 
 
 selects = c("06001401900","06001402000","06001402200", "06001981900", "06001982000")
-# for (yr in c(2019,2009)){
-#   tracts.all[tracts.all$year==yr & !is.na(tracts.all$tot_emp),
-#              'tot_EB_emp'] = sum(tracts.all[tracts.all$year==yr & !is.na(tracts.all$tot_emp)
-#                                             ,][['tot_emp']])
-#   tracts.all[tracts.all$year==yr & !is.na(tracts.all$tot_emp_info),
-#              'tot_EB_emp_info'] = sum(tracts.all[tracts.all$year==yr & !is.na(tracts.all$tot_emp_info)
-#                                                  ,][['tot_emp_info']])
-#   # LOCATION QUOTIENT for information industry employees in the East Bay area
-#   tracts.all[tracts.all$year==yr & !is.na(tracts.all$tot_emp),] = 
-#     tracts.all[tracts.all$year==yr & !is.na(tracts.all$tot_emp),] %>%
-#     mutate(
-#       lq_emp_info = 
-#         # ratio of info employees to total for tracts "local"
-#         (tot_emp_info/tot_emp) / 
-#         # ratio of info o total for East Bay "regional"
-#         (tot_EB_emp_info / tot_EB_emp)
-#     )}
+
+tracts.all[tracts.all$GEOID %in% selects,]
 
 BART.stops =
   BART.stops %>%
@@ -613,7 +656,6 @@ BART.stops =
     lat = map_dbl(geometry, ~st_centroid(.x)[[2]]),
     stop_nm = gsub("St. Oakland.*", "St", stop_nm)
   )
-
 
 buff_plot = 
   ggplot() + 
@@ -633,7 +675,7 @@ buff_plot =
       breaks = buffer_breaks,
       colors=brewer.pal(length(buffer_breaks),
                         name='Spectral'), guide='none') + 
-    labs(subtitle='½ Mile Buffer from Stations', caption='Figure 1.A.3') + 
+    labs(subtitle='½ Mile Buffer from Stations') + 
     mapTheme() + plot_limits()
 
 tracts_tracks = 
@@ -658,9 +700,8 @@ tracts_tracks =
       size = 2, fontface='bold', color='grey20', label.size = NA,
       box.padding = 0.5, fill=alpha('white',.5),
       aes(x=lon,y=lat, label=label)) + 
-    labs(subtitle = 'Cities, Tracts & Routes', caption='Figure 1.B.1') +
+    labs(subtitle = 'Cities, Tracts & Routes') +
     mapTheme() + plot_limits()
-
 
 nearest_stop = 
   ggplot() +
@@ -683,21 +724,19 @@ nearest_stop =
       fill=alpha('white',.5),
       aes(x=lon,y=lat, label=stop_nm)) + 
     scale_fill_discrete(name="Closest BART", guide='none') + 
-    labs(subtitle = 'Closest Station to each Tract', caption='Figure 1.B.2') +
+    labs(subtitle = 'Closest Station to each Tract') +
     scale_alpha_continuous(breaks=c(.5,1,1.5,2), name="Distance", range=c(1,0), guide='none') + 
     mapTheme() + plot_limits()
 
 tracts_tracks + buff_plot + nearest_stop + plot_annotation(title='East Bay Census Tracts & BART')
 
-
-
 ```
 
-## 1.B.3 Finding TOD Areas
+The TOD census tracts need to meet at least one of the two following requirements: (1) at least 50% of the tract's land area is within the ½ mile BART station buffers, or (2) at least 25% of the land area is within the ½ mile buffer (but that tract's buffer area is above .075 square miles). The second requirement accommodates TOD tracts that show the direct impacts from their transit proximity -- but have a geometry that is large enough to prevent them from being a majority within the ½ mile buffer. 
 
-*Buffering Transit (BART) Stops then Select Census Tracts by Area in TOD*
+Figure 1.2 highlights the 3 methods to narrow down TOD tracts --- with the selected tracts being highlighted with black outlines. 
 
-```{r 1B.3_TOD, echo=FALSE}
+```{r 1B3, fig.cap="East Bay Cities, BART Station .5 mile Buffers, & Closest Station to Census Tracts"}
 
 #tracts.all = st_as_sf(at)
 
@@ -790,15 +829,16 @@ ggplot() +
   scale_color_identity(guide = "legend", name='TOD Tracts', labels=c('Primarily within ½ Mile Buffer*')) + 
   facet_wrap(~Selection_Type) + 
   labs(title='Selecting Transit Oriented Development Census Tracts',
-       subtitle = "TOD Tracts have 50% of their Total Area within the ½ Mile Station Buffer\nor 25% of their Total Area (when the Buffer Area is at least .075 square miles)", caption="* Either the Tract's Buffer Area is 50% of Total Area or 25% of Total Area, if the Buffer Area is greater than .075 square miles\nFigure 1.B.3")+
+       subtitle = "TOD Tracts have 50% of their Total Area within the ½ Mile Station Buffer\nor 25% of their Total Area (when the Buffer Area is at least .075 square miles)", caption="* Either the Tract's Buffer Area is 50% of Total Area or 25% of Total Area, if the Buffer Area is greater than .075 square miles")+
   mapTheme() + plot_limits(poly.geometry = BART.buffers.TOD, buffer=mile*.25)
 
 ```
-### 1.D.1 Crime Data
 
-Crime
+## Homeless Encampment Complaints {#section1C}
 
-```{r 1D_Crime, echo=FALSE}
+The final part of the study (Section \@ref(section6)) is to focus on just the City of Oakland (for 2009, 2014, 2019) --- with a special focus on the rise of homelessness in the city. 
+
+```{r 1C}
 library(zoo)
 
 OAK.311.path = "C:/Users/nelms/OneDrive/Penn/MUSA-508/Files/OAK_311.csv"
@@ -836,29 +876,32 @@ OAK.311 = read.csv(OAK.311.path) %>%
   select(id, datetime, date, year, year_qtr, desc, lat, long) %>%
   st_as_sf(., coords = c('long','lat'), crs=CA_crs) %>% arrange(datetime) 
 
-OAK.311 = 
-  st_join(OAK.311, EB.cities[EB.cities$city=='Oakland',],
-          join=st_intersects) %>% filter(city=="Oakland") %>% select(-size)
 
 OAK.311[OAK.311$year_qtr %in% c(unique(OAK.311$year_qtr)[3], unique(OAK.311$year_qtr)[3]), "year"] = "2009"
 
 OAK.311 = OAK.311 %>% filter(year %in% c("2009","2014", "2019"))
 
-# ggplot(OAK.311, 
-#        aes(x=year_qtr %>% as.Date(), group=desc, fill=desc)
-#        ) +
-#       stat_bin(
-#        color="black")
+OAK.311 = 
+  st_join(OAK.311, EB.cities[EB.cities$city=='Oakland',],
+          join=st_intersects) %>% filter(city=="Oakland") %>% select(-size)
+
+OAK.311.desc =
+  OAK.311 %>% st_drop_geometry() %>% 
+  group_by(year) %>% count(desc) %>% 
+  spread(desc, n)
+
+OAK.311.desc
 
 ```
 
-### 1.D.2 Set Zone
+Since it is difficult to quantify a direct, spatial count of homelessness, a placeholder variable will be used: the amount of complaints about homeless encampments made by citizens to the City of Oakland's 311 citizen outreach. This data will be visualized in the graduated symbol maps of Section \@ref(section6A).
 
-Crime
+```{r 1D2}
 
-```{r 1.D.1_years}
-
-get_base_tracts = function(acs_year, acs_var_base=c("B25064_001")){
+get_base_tracts = function(
+  acs_year, 
+  acs_var_base=c("B25064_001")
+){
   tracts.acs =
      get_acs(
        geography = "tract",
@@ -877,9 +920,9 @@ get_base_tracts = function(acs_year, acs_var_base=c("B25064_001")){
     rename(med_rent = B25064_001) %>%
     mutate(
       med_rent_inf = 
-        ifelse(acs_year == 2009, med_rent * 1.19, 
-          ifelse(acs_year == 2014, med_rent * 1.08,
-             med_rent)),
+        med_rent * ifelse(acs_year == 2009, 1.19, 
+          ifelse(acs_year == 2014, 1.08,
+             1)),
       year = acs_year %>% as.character())
   
   return(tracts.acs)}
@@ -891,29 +934,65 @@ tracts.OAK = rbind(
   get_base_tracts(2019)
   ) %>% st_as_sf()
 
-glimpse(tracts.OAK)
+EB.OAK = EB.cities[EB.cities$city=='Oakland', ] %>% st_buffer(.,500) %>%
+  st_erase(., EB.cities[EB.cities$city!='Oakland', ])
 
-ggplot() + 
-  geom_sf(data=EB.cities) + 
-  geom_sf(data=OAK.311.join) + 
-  plot_limits(poly.geometry = EB.cities[EB.cities$city=='Oakland',])
+tracts.OAK.c =
+  tracts.OAK %>% st_centroid(., of_largest_polygon=TRUE) %>%
+  st_join(., EB.OAK,
+          join=st_intersects) %>% filter(city=="Oakland") %>% select(-size)
+tracts.OAK.c$GEOID_year = paste(tracts.OAK.c$GEOID, tracts.OAK.c$year)
+
+
+OAK_bart_distances = min_point_distances(
+  tracts.OAK.c$geometry, tracts.OAK.c$GEOID_year,
+  BART.stops$geometry, BART.stops$stop_id) %>%
+  rename(GEOID_year=ID, dist_BART=distance, closest_BART=closest) %>%
+  mutate(GEOID = sub("\\ .*", "", GEOID_year), year = sub(".* ", "", GEOID_year))
+
+tracts.OAK =
+  tracts.OAK %>%
+  merge(
+    .,
+    OAK_bart_distances,
+    by=c('GEOID', 'year'),
+  )
+tracts.OAK = st_erase(tracts.OAK, EB.water) %>% 
+  st_erase(., EB.cities[EB.cities$city!='Oakland', ]) 
+
+#EB.OAK = st_erase(EB.OAK, EB.water)
+
+select_choice = function(focus.year, focus.desc, tract.geometry){
+  focus.311 = OAK.311[(OAK.311$year==focus.year)&(OAK.311$desc==focus.desc),]
+  count_focus = lengths(st_intersects(tract.geometry, focus.311))
+  return(count_focus)}
+select_choice = Vectorize(select_choice)
+
+tracts.OAK = 
+  tracts.OAK %>%
+  mutate(
+    Illegal_Dumping = select_choice(year, 'Illegal Dumping', geometry),
+    Homeless_Encampment = select_choice(year, 'Homeless Encampment', geometry)
+  )
 
 ```
 
-
 ------------------------------------------------------------------------
 
-## 2 Four Time & Space Maps
+# Five Time & Space Maps {#section2}
+***Comparing TOD & non-TOD Tracts between 2009 & 2019***
 
-***Comparing TOD & non-TOD Tracts between 2000 & 2019***
+These five maps paint a primer of the housing and demographic change between 2009 and 2019 in the East Bay. 
 
-Median Rent, [Second], [Third], [Fourth]
-
-### 2.A People per Unit
-
+## People per Unit {#section2A}
 *Total Population per Occupied Housing Units*
 
-```{r 2A_variable1, echo=FALSE}
+Figure 2.1 is the first variable that highlights the overall building and housing conditions of the East Bay. Both the 2009 and 2019 maps highlight the general characteristics of the building density and housing stock: there is more multiple family housing (4+ people per unit)
+in the areas closer to BART stations and more single family housing farther away from the stations. Of note is the extremely high residents per unit (20+ people) in Berkeley to the university's student housing. Another important note is the extremely low density, un-changing hills of East Berkeley and Oakland -- where the high elevation, large stock of single-family housing, and aging residents makes it difficult to add density.  
+
+Between 2009 and 2019, we don't see too much of a change in location -- just a general increase in residents per housing unit. At the same time, West Berkeley, Emeryville, and Far-South Oakland all see an increase from 1.5 people per unit to almost 4 people per unit; this is likely the result of many industrial buildings being converted to apartments. 
+
+```{r 2A, fig.cap="People per Unit"}
 options(scipen=999)
 
 get_labels = function(
@@ -949,8 +1028,651 @@ get_labels = function(
   return(labels)
   }
 
-
 plot_vari = function(
+  focus_sf  = tracts.all,
+  variable  = "dens_pop",
+  qbreaks   = qBr(tracts.all, variable),
+  bucket_diff = 1,
+  title     = "Population Density", 
+  subtitle  = "2009-2019 East Bay with ½ mile station buffers",
+  legend_nm = variable,
+  caption   = "",
+  brewer_colors = 'Spectral',
+  round_digit = 0,
+  last_end_range = TRUE,
+  input_end_range = '',
+  bucket_suffix = '',
+  bucket_prefix = '',
+  buff_col = 'red',
+  col_rev = FALSE,
+  first_start_range = 0,
+  leg_xspace = .025
+){
+
+cutting_field = function(var_field, var_breaks){return(var_field %>% cut(., breaks = var_breaks, dig.lab=10, include.lowest = TRUE))}
+
+focus_sf$cut_field = cutting_field(focus_sf[[variable]], qbreaks)
+  
+cut_breaks = sapply(focus_sf$cut_field, function(brk) brk %>% levels())
+
+labels = get_labels(
+  cut_breaks, 
+  round_digit = round_digit, bucket_diff=bucket_diff, 
+  last_end_range=last_end_range, first_start_range=first_start_range, 
+  input_end_range=input_end_range, bucket_suffix=bucket_suffix, bucket_prefix=bucket_prefix)
+
+breaks_amount = length(qbreaks)-1
+col_vals = brewer.pal(breaks_amount, name=brewer_colors)
+
+if (col_rev==TRUE){col_vals=rev(col_vals)}
+
+return(
+ggplot()+
+  # geom_sf(data = EB.all, fill=alpha('grey50', .5), color=alpha('grey50', .5)) + 
+  # geom_sf(data = EB.back_water, fill=alpha('cornflowerblue', .5), color='transparent') + 
+  geom_sf(data  = EB.cities, fill='grey90')+
+  geom_sf(data  = focus_sf, aes(fill    = cut_field), color='grey50') +
+  
+  scale_fill_manual(
+    values=col_vals,
+    labels = labels, name=legend_nm) +
+  geom_sf(data=BART.buffers.TOD, fill='transparent', color=alpha(buff_col, alpha=.75), lwd=.75) +
+  geom_sf(
+    data=BART.stops, fill='white',
+    color='grey30', shape=21) + 
+  # geom_text(
+  #   data=EB.labels, check_overlap=TRUE,
+  #   size = 3.5, fontface='bold', color='black',
+  #   aes(x=lon,y=lat, label=label)) + 
+  labs(title = title, subtitle = subtitle,
+       caption=caption) +
+  guides(fill = guide_legend(title.position="top",
+                             #reverse=T,
+                             title.hjust = 0.5, title.vjust = 0)) + 
+  theme(legend.position = "bottom",
+        legend.spacing.x = unit(leg_xspace, 'in'),
+        legend.text = element_text(
+          margin = margin(r = .1, unit = 'in')),
+        legend.margin=margin(0,0,0,0),
+        legend.box.margin=margin(-5,-5,-5,-5)) +
+  facet_wrap(~year)+
+  mapTheme() + plot_limits()
+)}
+
+variable  = "pop_units"
+
+filt_sf = tracts.all[!is.na(tracts.all[[variable]]) &
+                      !is.infinite(tracts.all[[variable]])
+                       ,]
+mx = max(filt_sf[[variable]])
+
+breaks = c(0,1.5,2,2.5,4,20, mx)
+#breaks = seq(0, mx, length.out = 4)
+
+plot_vari(
+  focus_sf  = filt_sf,
+  variable  = variable,
+  qbreaks   = breaks,
+  title     = "People per Housing Unit", 
+  brewer_colors = 'BuPu',
+  legend_nm = "Total Residents per Occupied Housing Unit",
+  bucket_suffix = '',
+  input_end_range = '50',
+  last_end_range = FALSE,
+  round_digit=2,
+  bucket_diff=.1,
+  first_start_range=1,
+  leg_xspace = .2
+)
+
+#hist(filt_sf[['pop_units']], breaks=500, xlim=c(1,4))
+#filt_sf$pop_units<50
+```
+
+## Rent {#section2B}
+*Household Median Rent & Utilities Cost (Adjusted to 2019 inflation)*
+
+The East Bay's median gross rent reveals a dramatic jump in rent in a 10 year period --- even adjusting for the 2019 inflation. A dramatic change is the areas of lower income rent -- Downtown Oakland, Fruitvale, Emeryville, and West Berkeley -- all seeing a $500 to $1,000 increase in rent. West Berkeley & Emeryville's dramatic increase in rent and people per unit suggest a drastic change. Most of the immediate TOD tracts have increases, but not unique to the overal increase; so is there a demand for non-TOD housing in the West?.
+
+```{r 2B, fig.cap="Median Rent"}
+
+variable  = "med_rent_inf"
+
+filt_sf = tracts.all[!is.na(tracts.all[[variable]]) &
+                      !is.infinite(tracts.all[[variable]])
+                       ,]
+
+
+mx = max(filt_sf[[variable]])
+#breaks = seq(0, mx, length.out = 6)
+#breaks = c(0, 10000,20000,30000, mx)
+breaks = c(0, 1000, 1500, 2000, mx)
+
+plot_vari(
+  focus_sf  = filt_sf,
+  variable  = variable,
+  qbreaks   = breaks,
+  title     = "Median Gross Rent", 
+  caption   = "",
+  brewer_colors = 'Greens',
+  legend_nm = "Household Median Rent + Utilities (Adjusted to 2019 Inflation)",
+  input_end_range="3500",
+  bucket_prefix = '$',
+  first_start_range=500,
+  buff_col='blue'
+)
+
+variable = 'med_rent_util_inf'
+
+brewer_colors = 'Greens'
+
+
+```
+
+
+## Income spent on Rent {#section2C}
+*Percent of Median Household Income spent on Rent*
+
+This map of the percent of income spent on rent suggests a large change in personal finances and/or population in many areas of the city. The noticeable change is the actual *decrease* in the percent of income spent on rent -- especially West Berkeley, Emeryville, West Oakland, and South Oakland.
+
+Even though it initially appears optimistic that more residents are affording rent, it starts to turn pessimistic when recalling the sharp rise in rent in Figure 2.2. For West Berkeley, Emeryville, and West Oakland, the large increase in rent combined with less income going towards rent suggests the introduction of new units and wealthier residents. One tract in particular on the farthest tip of West Oakland goes from 43% of income going towards rent to only 19% -- with a rise of median rent going from $1,552 to $2,750 in that same period.
+
+
+```{r 2C, fig.cap="Income on Rent"}
+
+variable  = "pct_med_rent"
+
+filt_sf = tracts.all[!is.na(tracts.all[[variable]]) & !is.infinite(tracts.all[[variable]]),]
+
+mx = max(filt_sf[[variable]])
+#breaks = seq(0, mx, length.out = 6)
+#breaks = c(0, 10000,20000,30000, mx)
+breaks = c(0, 10,20,30,40, mx)
+
+plot_vari(
+  focus_sf  = filt_sf,
+  variable  = variable,
+  qbreaks   = breaks,
+  title     = "Percent of Income Spent on Rent", 
+  brewer_colors = 'RdYlGn',
+  legend_nm = "% of Median Income Spent on Rent + Utilities",
+  input_end_range='50',
+  bucket_suffix='%',
+  col_rev=TRUE,
+  buff_col='blue'
+)
+
+
+```
+
+## Young Adults {#section2D}
+*Percent of People between the ages of 22 and 34 compared to total people*
+
+The percent of young adults (Figure 2.4) highlights concentrations of young adults (above 30%). At the same time, the aging Oakland/Berkeley Hills population and the low-income families of South Oakland & Fruitvale retain the same age composition in this period. This map locates the 'young urban professionals' who have money, fewer responsibilities, and an ability to move to their location of choice. Northern TOD tracts and West Berkeley seem to receive the largest growth in young adults. The underlying complication of this map is remembering the East Bay's .003% increase in units for the 10% increase of population during this period. 
+
+```{r 2D, fig.cap="Young Adults"}
+
+variable  = "pct_22_34yo"
+
+filt_sf = tracts.all %>%   
+  transform(., pct_moved=as.numeric(pct_moved)) %>%
+  filter(!is.na(tracts.all[[variable]]) &
+                      !is.infinite(tracts.all[[variable]]))
+
+filt_sf[[variable]] = filt_sf[[variable]] * 100
+mx = max(filt_sf[[variable]])
+#breaks = seq(0, mx, length.out = 5)
+breaks = c(0, 15, 30, 45, mx)
+
+filt_sf$cut_field = 
+  filt_sf[[variable]] %>% 
+  cut(., 
+      breaks = breaks, dig.lab=10, include.lowest = FALSE)
+
+plot_vari(
+  focus_sf  = filt_sf,
+  variable  = variable,
+  qbreaks   = breaks,
+  bucket_diff=1,
+  round_digit=0,
+  title     = "Percent of Young Adults (22-34)", 
+  caption   = "",
+  brewer_colors = 'PuRd',
+  legend_nm = "% of Residents between the ages of 22 and 34",
+  input_end_range='75',
+  bucket_suffix='%',
+  col_rev=FALSE
+)
+
+```
+
+## Employees of Tech & Software companies {#section2E}
+*Percent of Employed People in the Information Industry (e.g. Technology, Software, Media) compared to Total Employed People*
+
+This map of the employees of the technology, software and media (Figure 2.5) strikes at the heart of the Bay Area's booming economy, pricing-out, and 'gentrification'. There is an increase of tech employees in the previously mentioned young and wealthy areas: Northern TOD tracts, West Berkeley, West Oakland, and Emeryville. At the same time, tech employees start to encroach on the neighborhoods of the typically low-income households: Fruitvale, Downtown Oakland, and West Oakland. 
+
+```{r 2E, fig.cap="Technology Employees"}
+
+variable  = "pct_emp_info"
+
+filt_sf = tracts.all %>%   
+  mutate(pct_22_34yo = pct_22_34yo * 100) %>%
+  filter(!is.na(tracts.all[[variable]]) &
+         !is.infinite(tracts.all[[variable]]))
+
+mx = max(filt_sf[[variable]])
+# Break reasons: min, right below mean/median (3.7%, 3.5%), above 3rd quantile, odd spike around 9-10%, max
+breaks = c(0, 3, 6, 9, mx)
+
+plot_vari(
+  focus_sf  = filt_sf,
+  variable  = variable,
+  qbreaks   = breaks,
+  bucket_diff=1,
+  round_digit=0,
+  title     = "Percent of Employed Residents in the Information Industry 2009-2019", 
+  brewer_colors = 'OrRd',
+  legend_nm = "% of Information Industry Employees (e.g. Technology, Software, Media)\nout of all Employed Residents",
+  input_end_range='25',
+  bucket_suffix='%',
+  buff_col='Black'
+)
+
+```
+
+------------------------------------------------------------------------
+
+# Bar Plot {#section3}
+*One grouped bar plot making these same comparisons*
+
+The Bar Plots (Figure 3.1) highlight that there is a completely different narrative for TOD and non-TOD tracts. To start, population has been practically stagnant for non-TOD tracts -- with an addition of 36,029 residents (a 0.07% increase); meanwhile, there was an increase of 26,840 TOD residents (a 24% increase). In a similar pattern, TOD tracts received relative jumps in the amount of young adults and tech employees, while the non-TOD tracts lied dormant. Overall, both TOD and non-TOD saw increases in rent and people per unit. 
+
+```{r 3, fig.cap="Bar Plot"}
+
+tracts.summary =
+  tracts.all %>% st_drop_geometry() %>%
+    mutate(
+      year = as.character(year),
+      pct_moved = pct_moved*100 ) %>%
+    group_by(year, TOD) %>%
+    summarize(
+      # Variable B  Population
+      Population    = sum(tot_pop, na.rm=T),
+      # Variable A  Rent (Inflation)
+      y_Median_Rent   = mean(med_rent_util_inf, na.rm = T),
+      # Variable 1  Popultion per Unit
+      yy_Pop_per_Unit  = sum(tot_pop, na.rm=T)/sum(tot_units, na.rm=T),
+        #mean(ifelse(pop_units>50, NA, pop_units), na.rm = T),
+      # Variable 2  % Income Spent on Rent 
+      z_Income_Rent_per = mean(pct_med_rent, na.rm = T),
+      # Variable 3  % Moved in Last Year
+      zz_Young_Adult_per = (sum(tot_22_34yo, na.rm=T)/sum(tot_pop, na.rm=T))*100,
+      # Variable 4
+      zzz_Info_per      = (sum(tot_emp_info, na.rm=T)/sum(tot_emp, na.rm=T))*100)
+
+plot_names = list(
+  'Population'  = "Population",
+  'y_Median_Rent' = "Median Rent\n& Utilities",
+  'yy_Pop_per_Unit'= "Population\nper Housing Unit*",
+  'z_Income_Rent_per'="% of Income\n Spent on Rent",
+  'zz_Young_Adult_per'   = "% of Pop between\n22 & 34 years old*",
+  'zzz_Info_per'    = "% Information\nEmployees*"
+)
+plot_labeller <- function(variable, value){return(plot_names[value])}
+col_labeller <- function(Variable, value){return(as.character(plot_names[value]))}
+
+tot_levels = c('Population', 'z_Median_Rent', 'zz_Pop_per_Unit')
+per_levels = c('Income_Rent_per', 'Moved_per', 'Info_per')
+all_levels = c(tot_levels, per_levels)
+total_bars = 
+  tracts.summary %>%
+  select(-z_Income_Rent_per, -zz_Young_Adult_per, -zzz_Info_per) %>%
+    gather(Variable, Value, -year, -TOD) %>% 
+  ggplot() +
+    geom_bar(stat = "identity", position = "dodge", 
+             aes(year, Value, fill = TOD)) +
+    facet_wrap(Variable ~ .,
+               scales = "free", ncol=3, 
+               labeller=plot_labeller,
+               ) +
+    scale_fill_manual(values = c("#bae4bc", "#0868ac"), guide='none') + 
+    labs(x=NULL, y=NULL) +
+    theme(panel.spacing = unit(1, "lines")) + 
+    plotTheme()
+
+
+percent_bars = 
+  tracts.summary %>%
+  select(-Population, -y_Median_Rent, -yy_Pop_per_Unit) %>%
+    gather(Variable, Value, -year, -TOD) %>% 
+    #mutate(Variable=factor(Variable, levels=per_levels)) %>%
+  ggplot() +
+    geom_bar(stat = "identity", position = "dodge", 
+             aes(year, Value, fill = TOD)) +
+    facet_wrap(~Variable,
+               #~reorder(Variable, all_levels, first),         
+               #~factor(Variable, levels = per_levels),
+               scales = "free", ncol=3, 
+               labeller=plot_labeller
+               ) +
+    scale_fill_manual(values = c("#bae4bc", "#0868ac")) +
+    labs(x=NULL, y=NULL) +
+    theme(panel.spacing = unit(1, "lines")) + 
+    scale_y_continuous(labels = function(x) paste0(x, "%")) + 
+    plotTheme() + theme(legend.position="bottom")
+
+
+total_bars / percent_bars +
+  plot_annotation(title = "Difference Between TOD Tracts",
+                  subtitle = "variables with * were summed before adding percentages") + plotTheme() 
+
+```
+
+------------------------------------------------------------------------
+
+# Table {#section4}
+*One table making these same comparisons*
+
+The table adds in the numbers previously discussed in the last section.
+
+```{r 4, fig.cap="Table 1"}
+
+plot_names = list(
+  'Population'  = "Population",
+  'y_Median_Rent'        = "Median Rent & Utilities(Adjusted)",
+  'yy_Pop_per_Unit'= "Population per Housing Unit",
+  'z_Income_Rent_per'="% of Income Spent on Rent",
+  'zz_Young_Adult_per'   = "% of Population between the ages of 22 and 34",
+  'zzz_Info_per'    = "% of Population in the Information Industry"
+)
+
+col_labeller = function(value){return(as.character(plot_names[value]))}
+rounder = function(value, colname){return(paste(
+  ifelse(str_sub(colname,1,4)=='z_Median_Rent', '$ ', ''),
+  format(round(value, digit = ifelse(value>31,0,2)),drop0trailing=TRUE, big.mark=","),
+  ifelse(str_sub(colname,-4,-1)=='_per', ' %', ''), sep=''))}
+
+tracts.table = 
+  tracts.summary %>%
+    unite(year.TOD, year, TOD, sep = ": ", remove = T) %>%
+    gather(Variable, Value, -year.TOD) %>%
+    mutate(Value = rounder(Value,Variable)) %>%
+    spread(year.TOD, Value) %>%
+    arrange(., Variable) %>%
+    mutate(Variable=col_labeller(Variable)) %>%
+    # mutate(Variable = factor(Variable, levels =c("Population","Median Rent & Utilities(Adjusted)","Population per Housing Unit","% of Income Spent on Rent","% of Population that Moved this Year","% of Population in the Information Industry"))) %>%
+    kable(., col.names = c("Mean Variables","non-TOD","TOD","non-TOD","TOD"), align="lrrrr") %>%
+      kable_styling() %>%
+      footnote(general_title = "\n", general = "Table 1.3") %>% 
+      add_header_above(., header = c(" "=1, "2009" = 2, "2019" = 2))
+ #col.names = c("","2009","2009","2019","2019")
+tracts.table
+
+```
+
+------------------------------------------------------------------------
+
+# Graduated Symbol Maps {#section5}
+*Two Graduated Symbol Maps within 0.5 miles transit stations*
+
+The graduate symbols maps highlight the specific TOD trends for Berkeley and Oakland.
+
+## Map of Population within ½ Mile of BART Stations {#section5A}
+
+The population graduated symbols (Figure 5.1) highlight the lack of lack of real population growth and the higher amount of population that is closer to TOD in North Oakland and Berkeley. Downtown Oakland, West Oakland, and the South Oakland stations don't have as much population -- likely due to the large amount of commercial and industrial space next to the stations.
+
+```{r 5A, fig.cap="Population Graduated Symbol"}
+
+variable = 'pop'
+
+brewer_colors = 'Purples'
+
+stops.TOD = 
+  tracts.all[tracts.all$TOD=='TOD',] %>% st_drop_geometry() %>%
+    group_by(closest_BART, year) %>% 
+    summarize(
+      rent = mean(med_rent_inf, na.rm=TRUE),
+      pop=sum(tot_pop, na.rm=TRUE)) %>% rename(stop_id = closest_BART) %>%
+    merge(., 
+          BART.stops %>% select(stop_id), 
+          by='stop_id', left=TRUE)%>% st_as_sf() 
+
+plot_title = "Total Population within ½ Mile of BART Stations"
+legend_title = "Total Population"
+subtitle = "East Bay Census Tracts & BART Stations"
+caption = "Map 5.A"
+
+filt_sf = stops.TOD[!is.na(stops.TOD[[variable]]) &
+                    !is.infinite(stops.TOD[[variable]])
+                       ,]
+
+mx = max(filt_sf[[variable]])
+
+qbreaks = c(0, 5000, 10000, 15000, 25000)
+#qbreaks = seq(0, mx, length.out = 5)
+
+cutting_field = function(var_field, var_breaks){return(var_field %>% cut(., breaks = var_breaks, dig.lab=10, include.lowest = TRUE))}
+
+filt_sf$cut_field = cutting_field(filt_sf[[variable]], qbreaks)
+  
+cut_breaks = sapply(filt_sf$cut_field, function(brk) brk %>% levels())
+
+labels = get_labels(
+  cut_breaks, 
+  round_digit = 0, 
+  bucket_diff = 1, 
+  last_end_range  = TRUE,
+  first_start_range   = '', 
+  input_end_range = '25000', 
+  bucket_suffix = '')
+
+breaks_amount = length(qbreaks)-1
+col_vals = brewer.pal(breaks_amount, name=brewer_colors)
+
+ggplot()+
+  #POLYGON
+  geom_sf(data = tracts.all, fill = "white",color = "grey75")+
+  geom_sf(
+    data=BART.buffers.TOD, 
+    fill='transparent', color='red', lwd=1) +
+  geom_sf(
+    data=tracts.TOD %>% filter(year==2019) %>% st_union(),
+    fill='transparent', color='Black', lwd=1)+ 
+  geom_sf(
+    data=BART.stops, fill='white',
+    color='grey30', shape=21) + 
+  # POINT
+  geom_sf(data = filt_sf,
+          shape = 21, color='grey10',
+          aes(size = cut_field, fill = cut_field)) +
+  scale_size_manual(
+          values = seq(4, 10, length.out = breaks_amount),
+          labels = labels, 
+          name=legend_title)+
+  scale_fill_manual(
+      values = col_vals,
+      labels = labels, 
+      name='Total Population', guide='none') +
+  labs(title = 'Total Population of TOD Tracts',
+       subtitle = 'grouped by BART Stations (sum)',
+       caption = '') +
+  guides(size = 
+      guide_legend(override.aes = list(fill = col_vals))) + 
+  theme(axis.title=element_blank(),axis.text=element_blank(), 
+        axis.ticks=element_blank(), panel.background = element_rect(fill='gray')) +
+  facet_wrap(~year)+
+  mapTheme() + plot_limits(tracts.TOD %>% filter(year==2019), buffer=mile*.5)
+
+```
+
+## Map of Rent within ½ Mile of BART Stations {#section5B}
+
+Overall, the rent increases in all of the station areas (in Figure 5.2). This shows both the increased demand to rent housing units and in TOD area.
+
+```{r 5B, fig.cap="Rent Graduated Symbol"}
+
+variable = 'rent'
+
+brewer_colors = 'Greens'
+
+plot_title = "Median Gross Rent within ½ Mile of BART Stations"
+legend_title = "Median Rent + Utilities\n(Adjusted to 2019 Inflation)"
+subtitle = "East Bay Census Tracts & BART Stations"
+caption = ""
+
+filt_sf = stops.TOD[!is.na(stops.TOD[[variable]]) &
+                    !is.infinite(stops.TOD[[variable]])
+                       ,]
+
+mx = max(filt_sf[[variable]])
+
+qbreaks = c(500,1000, 1400, 1900)
+#qbreaks = seq(min(filt_sf[[variable]]), mx, length.out = 4)
+
+cutting_field = function(var_field, var_breaks){return(var_field %>% cut(., breaks = var_breaks, dig.lab=10, include.lowest = TRUE))}
+
+filt_sf$cut_field = cutting_field(filt_sf[[variable]], qbreaks)
+  
+cut_breaks = sapply(filt_sf$cut_field, function(brk) brk %>% levels())
+
+labels = get_labels(
+  cut_breaks, 
+  round_digit = 0, 
+  bucket_diff = 1, 
+  last_end_range  = TRUE,
+  first_start_range  = '500', 
+  input_end_range = '1900', 
+  bucket_suffix = '')
+
+breaks_amount = length(qbreaks)-1
+col_vals = brewer.pal(breaks_amount, name=brewer_colors)
+
+ggplot()+
+  #POLYGON
+  geom_sf(data = tracts.all, fill = "white",color = "grey75")+
+  geom_sf(
+    data=BART.buffers.TOD, 
+    fill='transparent', color='red', lwd=1) +
+  geom_sf(
+    data=tracts.TOD %>% filter(year==2019) %>% st_union(),
+    fill='transparent', color='Black', lwd=1)+ 
+  geom_sf(
+    data=BART.stops, fill='white',
+    color='grey30', shape=21) + 
+  # POINT
+  geom_sf(data = filt_sf %>% st_centroid(),
+          shape = 21, color='grey10',
+          aes(size = cut_field, fill = cut_field)) +
+  scale_size_manual(
+          values = seq(4, 10, length.out = breaks_amount),
+          labels = labels, 
+          name=legend_title)+
+  scale_fill_manual(
+      values = col_vals,
+      labels = labels, 
+      name='Median Rent + Utilities\n averaged by BART Stop', guide='none') +
+  labs(title = 'Median Rent of TOD Tracts',
+       subtitle = 'grouped by BART Stations (mean)',
+       caption = '') +
+  guides(size = 
+      guide_legend(override.aes = list(fill = col_vals))) + 
+  theme(axis.title=element_blank(),axis.text=element_blank(), 
+        axis.ticks=element_blank(), panel.background = element_rect(fill='gray')) +
+  facet_wrap(~year)+
+  mapTheme() + plot_limits(tracts.TOD %>% filter(year==2019), buffer=mile*.5)
+
+```
+
+------------------------------------------------------------------------
+# Rent, Homelessness, & Distance to BART {#section6}
+
+In the following plots, the study's focus will temporarily narrow down to the City of Oakland and the years of 2009, 2014, and 2019. The scope allows the use of the City of Oakland's 311 citizen request service -- specifically looking at requests to remove homeless encampments. Homelessness in the Bay Area has increased tremendously in the past 20 years -- with rising rents being a considerable cause. 
+
+In Figure 6.1, both the rent and amount of homeless encampment requests are compared to the distance of BART. Specifically, there is a significant rise in rent and requests to remove homeless encampments over the last 10 years. For rent and distance to BART, rent increases with distance to BART -- likely due to the larger house sizes in the Oakland Hills, the small amount of tracts that are over 2.5 miles from BART, and the small amount of units for rent father from BART. The increase in rent between 2014 and 2019 is very noticeable, regardless of distance to BART.
+
+```{r 6A, fig.cap="Rent, Homeless, & Distance to BART"}
+
+buff_breaks = seq(0,5,by=.5)
+
+tracts.OAK$BART_dist = cut(
+  tracts.OAK$dist_BART/mile, breaks = buff_breaks,
+  dig.lab=10, include.lowest = TRUE, 
+  labels =  seq(.5,5,by=.5))
+
+tracts.OAK.mile = 
+  tracts.OAK %>% st_drop_geometry() %>% 
+  group_by(year, BART_dist) %>%
+  summarize(
+    tracts = n(),
+    mean_rent = mean(med_rent_inf, na.rm=TRUE),
+    Homeless_Encampment = sum(Homeless_Encampment),
+    Illegal_Dumping = sum(Illegal_Dumping)
+  ) %>% ungroup(.) %>%
+  mutate(
+    BART_dist = as.numeric(as.character(BART_dist)),
+    year = as.character(year)
+    )
+
+rent_breaks = c(1000,1500,2000,2500,3000)
+rent_labels = c("$ 1,000","","$ 2,000","","$ 3,000")
+rent = 
+  ggplot(data=tracts.OAK.mile, 
+         aes(x=BART_dist, 
+             y=mean_rent, color=year)) +
+  geom_line(lwd=1.5)+
+  geom_point(size=2)+
+  labs(
+      title = "Distance to BART from Oakland Census Tracts",
+      subtitle="Mean Rent & Utilities (adjusted to 2019 inflation)") +
+  scale_color_brewer(palette="Greens") + 
+  scale_y_continuous(
+    breaks = rent_breaks,
+    labels = rent_labels,
+    name = "Mean Rent (adj)") + 
+  theme(axis.title.x=element_blank()) + 
+  scale_color_manual(
+    name = "Years",
+    values=brewer.pal(6, name="Greens")[c(2,4,6)])  + plotTheme()
+
+home_breaks = c(0,250,500,750,1000)
+home_labels = c("0","250","500","750","1,000")
+homeless = 
+  ggplot(data=tracts.OAK.mile, 
+         aes(x=BART_dist, 
+             y=Homeless_Encampment, color=year)) +
+  geom_line(lwd=1.5)+
+  geom_point(size=2)+
+  scale_y_continuous(
+    breaks = home_breaks,
+    labels = home_labels,
+    name = "Requests to Rem0ve") +
+  scale_x_continuous(
+    name = "Distance to BART (miles)") + 
+  labs(
+    subtitle="Requests to Remove Homeless Encampments") +
+  scale_color_manual(
+    name = "Years",
+    values=brewer.pal(6, name="Purples")[c(2,4,6)]) + plotTheme()
+
+
+
+library(cowplot)
+
+plot_grid(rent, homeless, align='v', ncol=1) + 
+  labs(title = "Rent, Homelessness, BART Distances")
+
+
+```
+
+For requests to remove homeless encampments, it is noticeably higher closer to BART. This is likely due to the larger amount of open space, transportation options, and resources closer to Downtown and the bay. Like rent, there is a noticeable jump in homelessness requests from 2014 to 2019. 
+
+Taking in all 311 requests (e.g. Illegal Dumping, Littering, Abandoned cars) into account, the homeless encampment requests' increase went far beyond the all requests -- with all requests increasing by 83% from 2014 to 2019, but homeless requests increasing by 330%. 
+
+Looking at Figure 6.2, the homeless encampments locate themselves on the bay shores and along the BART routes. This likely is to maximize the open land (compared to the low density of the hills) and the amount of resources close to higher density transit areas. 
+
+```{r 6B, fig.cap="Homeless Map"}
+
+plot_vari_spec = function(
   focus_sf  = tracts.all,
   variable  = "dens_pop",
   qbreaks   = qBr(tracts.all, variable),
@@ -958,7 +1680,7 @@ plot_vari = function(
   title     = "Population Density 2009-2019", 
   subtitle  = "East Bay with ½ mile buffer from BART stations",
   legend_nm = variable,
-  caption   = "Figure 2.A",
+  caption   = "",
   brewer_colors = 'Spectral',
   round_digit = 0,
   last_end_range = TRUE,
@@ -1006,802 +1728,49 @@ ggplot()+
   #   aes(x=lon,y=lat, label=label)) + 
   labs(title = title, subtitle = subtitle,
        caption=caption) +
-  guides(fill = guide_legend(reverse=T)) + 
+  guides(fill = guide_legend(title.position="bottom", 
+                             title.hjust = 0.5, title.vjust = 0)) + 
+  theme(legend.position = "bottom",
+        legend.spacing.x = unit(.1, 'in')) +
   facet_wrap(~year)+
   mapTheme() + plot_limits()
 )}
 
-variable  = "pop_units"
+################
 
-filt_sf = tracts.all[!is.na(tracts.all[[variable]]) &
-                      !is.infinite(tracts.all[[variable]])
+variable  = "Homeless_Encampment"
+
+filt_sf = tracts.OAK[!is.na(tracts.OAK[[variable]]) &
+                      !is.infinite(tracts.OAK[[variable]])
                        ,]
 mx = max(filt_sf[[variable]])
 
-breaks = c(0,1.5,2,4,20, mx)
+breaks = c(0,25,50,100, 150, mx)
 #breaks = seq(0, mx, length.out = 4)
 
-plot_vari(
+plot_vari_spec(
   focus_sf  = filt_sf,
   variable  = variable,
   qbreaks   = breaks,
-  title     = "People per Units 2009-2019", 
-  caption   = "Figure 2.A",
-  brewer_colors = 'BuPu',
-  legend_nm = "People per Units",
-  bucket_suffix = '',
+  title     = "Homeless Encampments", 
+  subtitle  = "Amount of Citizen Requests to the City of Oakland to Remove Homeless Encampments",
+  caption   = "",
+  brewer_colors = 'OrRd',
+  legend_nm = "Encampment Requests per Tract",
+  bucket_suffix = '  ',
   input_end_range = '200',
   last_end_range = FALSE,
-  round_digit=2,
-  bucket_diff=.1,
-  first_start_range=1
-)
-
-```
-
-### 2.B Income spent on Rent
-*Percent of Median Household Income spent on Rent*
-
-```{r 2B_variable2}
-
-variable  = "pct_med_rent"
-
-filt_sf = tracts.all[!is.na(tracts.all[[variable]]) &
-                      !is.infinite(tracts.all[[variable]])
-                       ,]
-
-
-mx = max(filt_sf[[variable]])
-#breaks = seq(0, mx, length.out = 6)
-#breaks = c(0, 10000,20000,30000, mx)
-breaks = c(0, 10,20,30,40, mx)
-
-plot_vari(
-  focus_sf  = filt_sf,
-  variable  = variable,
-  qbreaks   = breaks,
-  title     = "Percent of Income Spent on Rent 2009-2019", 
-  caption   = "Figure 2.B",
-  brewer_colors = 'RdYlGn',
-  legend_nm = "% of Median Income\nSpent on Rent",
-  input_end_range='50',
-  bucket_suffix='%',
-  col_rev=TRUE,
-  buff_col='blue'
-)
-
-```
-
-### 2.C People Who Recently Moved
-*Percent of People who were in a different house in the last year compared to total people*
-
-```{r 2C_variable3}
-
-variable  = "pct_moved"
-
-filt_sf = tracts.all %>%   
-  transform(., pct_moved=as.numeric(pct_moved)) %>%
-  filter(!is.na(tracts.all[[variable]]) &
-                      !is.infinite(tracts.all[[variable]]))
-
-filt_sf[[variable]] = filt_sf[[variable]] * 100
-mx = max(filt_sf[[variable]])
-#breaks = seq(0, mx, length.out = 5)
-breaks = c(0, 15, 30, 45, mx)
-
-filt_sf$cut_field = 
-  filt_sf[[variable]] %>% 
-  cut(., 
-      breaks = breaks, dig.lab=10, include.lowest = FALSE)
-
-plot_vari(
-  focus_sf  = filt_sf,
-  variable  = variable,
-  qbreaks   = breaks,
-  bucket_diff=1,
-  round_digit=2,
-  title     = "Percent of Population that Moved in Last Year 2009-2019", 
-  caption   = "Figure 2.C",
-  brewer_colors = 'PuRd',
-  legend_nm = "% of Population that did not\nreside in their current house\n a year ago",
-  input_end_range='90',
-  bucket_suffix='%',
-  col_rev=FALSE
-)
-
-```
-
-### 2.D People in the Information Industry
-
-*Percent of Employed People in the Information Industry (e.g. Technology, Software) compared to Total Employed People*
-
-```{r 2D_variable4}
-
-variable  = "pct_emp_info"
-
-filt_sf = tracts.all %>%   
-  mutate(pct_22_34yo = pct_22_34yo * 100) %>%
-  filter(!is.na(tracts.all[[variable]]) &
-         !is.infinite(tracts.all[[variable]]))
-
-mx = max(filt_sf[[variable]])
-# Break reasons: min, right below mean/median (3.7%, 3.5%), above 3rd quantile, odd spike around 9-10%, max
-breaks = c(0, 3, 6, 9, mx)
-
-plot_vari(
-  focus_sf  = filt_sf,
-  variable  = variable,
-  qbreaks   = breaks,
-  bucket_diff=1,
   round_digit=0,
-  title     = "Percent of Employed Residents in the Information Industry 2009-2019", 
-  caption   = "Figure 2.D",
-  brewer_colors = 'OrRd',
-  legend_nm = "% of Information Industry Employees\n(e.g. Technology, Software, Media)\nout of all Employed Residents",
-  input_end_range='25',
-  bucket_suffix='%',
-  buff_col='Black'
+  bucket_diff=1,
+  first_start_range=0
 )
 
-```
-
-------------------------------------------------------------------------
-
-## 3 Bar Plot
-
-*One grouped bar plot making these same comparisons*
-
-```{r 3_barplot, echo=FALSE, warning=FALSE, message=FALSE, results='hide', fig.keep='all'}
-
-tracts.summary =
-  tracts.all %>% st_drop_geometry() %>%
-    mutate(
-      year = as.character(year),
-      pct_moved = pct_moved*100
-           ) %>%
-    group_by(year, TOD) %>%
-    summarize(
-      # Variable B  Population
-      Population    = mean(tot_pop, na.rm = T),
-      # Variable A  Rent (Inflation)
-      y_Median_Rent   = mean(med_rent_util_inf, na.rm = T),
-      # Variable 1  Popultion per Unit
-      yy_Pop_per_Unit  = mean(ifelse(pop_units>50, NA, pop_units), na.rm = T),
-      # Variable 2  % Income Spent on Rent 
-      z_Income_Rent_per = mean(pct_med_rent, na.rm = T),
-      # Variable 3  % Moved in Last Year
-      zz_Moved_per     = mean(pct_moved, na.rm = T),
-      # Variable 4
-      zzz_Info_per      = mean(pct_emp_info, na.rm = T))
-
-plot_names = list(
-  'Population'  = "Population",
-  'y_Median_Rent' = "Median Rent\n& Utilities",
-  'yy_Pop_per_Unit'= "Population\nper Housing Unit",
-  'z_Income_Rent_per'="% of Income\n Spent on Rent",
-  'zz_Moved_per'   = "% that Moved\nthis Year",
-  'zzz_Info_per'    = "% Information\nEmployees"
-)
-plot_labeller <- function(variable, value){return(plot_names[value])}
-col_labeller <- function(Variable, value){return(as.character(plot_names[value]))}
-
-tot_levels = c('Population', 'z_Median_Rent', 'zz_Pop_per_Unit')
-per_levels = c('Income_Rent_per', 'Moved_per', 'Info_per')
-all_levels = c(tot_levels, per_levels)
-total_bars = 
-  tracts.summary %>%
-  select(-z_Income_Rent_per, -zz_Moved_per, -zzz_Info_per) %>%
-    gather(Variable, Value, -year, -TOD) %>% 
-    #mutate(Variable=factor(Variable, levels=tot_levels)) %>%
-  ggplot() +
-    geom_bar(stat = "identity", position = "dodge", 
-             aes(year, Value, fill = TOD)) +
-    facet_wrap(Variable ~ .,
-              #~reorder(Variable, all_levels, first),   
-               #~factor(Variable, levels = tot_levels),
-               scales = "free", ncol=3, 
-               labeller=plot_labeller,
-               ) +
-    scale_fill_manual(values = c("#bae4bc", "#0868ac"), guide='none') + 
-    labs(x=NULL, y=NULL) +
-    theme(panel.spacing = unit(1, "lines")) + 
-    plotTheme()
-
-
-percent_bars = 
-  tracts.summary %>%
-  select(-Population, -y_Median_Rent, -yy_Pop_per_Unit) %>%
-    gather(Variable, Value, -year, -TOD) %>% 
-    #mutate(Variable=factor(Variable, levels=per_levels)) %>%
-  ggplot() +
-    geom_bar(stat = "identity", position = "dodge", 
-             aes(year, Value, fill = TOD)) +
-    facet_wrap(~Variable,
-               #~reorder(Variable, all_levels, first),         
-               #~factor(Variable, levels = per_levels),
-               scales = "free", ncol=3, 
-               labeller=plot_labeller
-               ) +
-    scale_fill_manual(values = c("#bae4bc", "#0868ac")) +
-    labs(x=NULL, y=NULL) +
-    theme(panel.spacing = unit(1, "lines")) + 
-    scale_y_continuous(labels = function(x) paste0(x, "%")) + 
-    plotTheme() + theme(legend.position="bottom")
-
-
-total_bars / percent_bars +
-  plot_annotation(title = "Differences Between TOD Tract's Variables in 2009 & 2019",
-                  caption = "") + plotTheme() 
+### how much homeless compares to other
 
 ```
 
 ------------------------------------------------------------------------
 
-## 4 Table
+# Policy Brief {#section7}
 
-*One table making these same comparisons*
-
-```{r 4_table, results="asis"}
-
-plot_names = list(
-  'Population'  = "Population",
-  'y_Median_Rent'        = "Median Rent & Utilities(Adjusted)",
-  'yy_Pop_per_Unit'= "Population per Housing Unit",
-  'z_Income_Rent_per'="% of Income Spent on Rent",
-  'zz_Moved_per'   = "% of Population that Moved this Year",
-  'zzz_Info_per'    = "% of Population in the Information Industry"
-)
-
-col_labeller = function(value){return(as.character(plot_names[value]))}
-rounder = function(value, colname){return(paste(
-  ifelse(str_sub(colname,1,4)=='z_Median_Rent', '$ ', ''),
-  format(round(value, digit = ifelse(value>31,0,2)),drop0trailing=TRUE, big.mark=","),
-  ifelse(str_sub(colname,-4,-1)=='_per', ' %', ''), sep=''))}
-
-tracts.table = 
-  tracts.summary %>%
-    unite(year.TOD, year, TOD, sep = ": ", remove = T) %>%
-    gather(Variable, Value, -year.TOD) %>%
-    mutate(Value = rounder(Value,Variable)) %>%
-    spread(year.TOD, Value) %>%
-    arrange(., Variable) %>%
-    mutate(Variable=col_labeller(Variable)) %>%
-    # mutate(Variable = factor(Variable, levels =c("Population","Median Rent & Utilities(Adjusted)","Population per Housing Unit","% of Income Spent on Rent","% of Population that Moved this Year","% of Population in the Information Industry"))) %>%
-    kable(., col.names = c("Mean Variables","non-TOD","TOD","non-TOD","TOD"), align="lrrrr") %>%
-      kable_styling() %>%
-      footnote(general_title = "\n", general = "Table 1.3") %>% 
-      add_header_above(., header = c(" "=1, "2009" = 2, "2019" = 2))
- #col.names = c("","2009","2009","2019","2019")
-tracts.table
-
-```
-
-------------------------------------------------------------------------
-
-## 5 Graduated Symbol Maps
-
-*Two Graduated Symbol Maps within 0.5 miles transit stations*
-
-### 5.A Map of Population within ½ Mile of BART Stations
-
-```{r 5A_pop}
-
-variable = 'tot_pop'
-
-brewer_colors = 'Purples'
-
-plot_title = "Total Population within ½ Mile of BART Stations"
-legend_title = "Total Population"
-subtitle = "East Bay Census Tracts & BART Stations"
-caption = "Map 5.A"
-
-filt_sf = tracts.all[!is.na(tracts.all[[variable]]) &
-                    !is.infinite(tracts.all[[variable]]) & 
-                     (tracts.all$TOD=='TOD')
-                       ,]
-
-mx = max(filt_sf[[variable]])
-
-qbreaks = c(0, 1000,2500,5000,7500, mx)
-#qbreaks = seq(0, mx, length.out = 7)
-
-cutting_field = function(var_field, var_breaks){return(var_field %>% cut(., breaks = var_breaks, dig.lab=10, include.lowest = TRUE))}
-
-filt_sf$cut_field = cutting_field(filt_sf[[variable]], qbreaks)
-  
-cut_breaks = sapply(filt_sf$cut_field, function(brk) brk %>% levels())
-
-labels = get_labels(
-  cut_breaks, 
-  round_digit = 0, 
-  bucket_diff = 1, 
-  last_end_range  = TRUE,
-  first_start_range   = '', 
-  input_end_range = '10000', 
-  bucket_suffix = '')
-
-breaks_amount = length(qbreaks)-1
-col_vals = brewer.pal(breaks_amount, name=brewer_colors)
-
-ggplot()+
-  #POLYGON
-  geom_sf(data = tracts.all,fill = "white",color = "grey75")+
-  geom_sf(
-    data=BART.buffers.TOD, 
-    fill='transparent', color='red', lwd=1) +
-  geom_sf(
-    data=tracts.TOD %>% filter(year==2019) %>% st_union(),
-    fill='transparent', color='Black', lwd=1)+ 
-  geom_sf(
-    data=BART.stops, fill='white',
-    color='grey30', shape=21) + 
-  # POINT
-  geom_sf(data = filt_sf  %>% st_centroid(),
-          shape = 21, color='grey10',
-          aes(size = cut_field,fill = cut_field)) +
-  scale_size_manual(
-          values = seq(1, 6, length.out = breaks_amount),
-          labels = labels, 
-          name=legend_title)+
-  scale_fill_manual(
-      values = col_vals,
-      labels = labels, 
-      name='Total Population', guide='none') +
-  labs(title = plot_title,
-       subtitle = subtitle,
-       caption = caption) +
-  guides(size = 
-      guide_legend(override.aes = list(fill = col_vals))) + 
-  theme(axis.title=element_blank(),axis.text=element_blank(), axis.ticks=element_blank(), panel.background = element_rect(fill='gray')) +
-  facet_wrap(~year)+
-  mapTheme() + plot_limits(tracts.TOD %>% filter(year==2019), buffer=mile*.5)
-
-```
-
-### 5.B Map of Rent within ½ Mile of BART Stations
-
-```{r 5B_rent}
-
-variable = 'med_rent_util_inf'
-
-brewer_colors = 'Greens'
-
-plot_title = "Median Gross Rent within ½ Mile of BART Stations"
-legend_title = "Median Rent + Utilities\n(Adjusted to 2019 Inflation)"
-subtitle = "East Bay Census Tracts & BART Stations"
-caption = "Map 5.B"
-
-filt_sf = tracts.all[!is.na(tracts.all[[variable]]) &
-                    !is.infinite(tracts.all[[variable]]) & 
-                     (tracts.all$TOD=='TOD')
-                       ,]
-
-mx = max(filt_sf[[variable]])
-
-qbreaks = c(0, 750, 1500, 2000, mx)
-#qbreaks = seq(0, mx, length.out = 6)
-
-cutting_field = function(var_field, var_breaks){return(var_field %>% cut(., breaks = var_breaks, dig.lab=10, include.lowest = TRUE))}
-
-filt_sf$cut_field = cutting_field(filt_sf[[variable]], qbreaks)
-  
-cut_breaks = sapply(filt_sf$cut_field, function(brk) brk %>% levels())
-
-labels = get_labels(
-  cut_breaks, 
-  round_digit = 0, 
-  bucket_diff = 1, 
-  last_end_range  = TRUE,
-  first_start_range  = '', 
-  input_end_range = '3500', 
-  bucket_suffix = '',
-  bucket_prefix = '$')
-
-breaks_amount = length(qbreaks)-1
-col_vals = brewer.pal(breaks_amount, name=brewer_colors)
-
-ggplot()+
-  #POLYGON
-  geom_sf(data = tracts.all,fill = "white",color = "grey75")+
-  geom_sf(
-    data=BART.buffers.TOD, 
-    fill='transparent', color='red', lwd=1) +
-  geom_sf(
-    data=tracts.TOD %>% filter(year==2019) %>% st_union(),
-    fill='transparent', color='Black', lwd=1)+ 
-  geom_sf(
-    data=BART.stops, fill='white',
-    color='grey30', shape=21) + 
-  # POINT
-  geom_sf(data = filt_sf  %>% st_centroid(),
-          shape = 21, color='grey10',
-          aes(size = cut_field,fill = cut_field)) +
-  scale_size_manual(
-          values = seq(1, 6, length.out = breaks_amount),
-          labels = labels, 
-          name=legend_title)+
-  scale_fill_manual(
-      values = col_vals,
-      labels = labels, 
-      name='Total Population', guide='none') +
-  labs(title = plot_title,
-       subtitle = subtitle,
-       caption = caption) +
-  guides(size = 
-      guide_legend(override.aes = list(fill = col_vals))) + 
-  theme(axis.title=element_blank(),axis.text=element_blank(), axis.ticks=element_blank(), panel.background = element_rect(fill='gray')) +
-  facet_wrap(~year)+
-  mapTheme() + plot_limits(tracts.TOD %>% filter(year==2019), buffer=mile*.5)
-
-
-hist(filt_sf[[variable]], breaks=20)
-```
-
-------------------------------------------------------------------------
-
-## 6 Geom Line Plots
-
-***Rent & Crime compared to the Distance to BART stations***
-
-```{r 6_geom_line}
-
-glimpse(tracts.all)
-
-
-```
-
-------------------------------------------------------------------------
-
-## 7 Policy Brief
-
-------------------------------------------------------------------------
-
-## Load data from {tidycensus}
-
-```{r acs_vars, cache = TRUE, message = FALSE, warning = FALSE, results=FALSE}
-acs_vars <- c(
-    "B01001_001",    # ACS total Pop stimat
-    "B15003_001",
-    "B25002_001",     # stimat of total housing units
-    "B25002_003",     # Numbr of vacant housing units
-    "B19013_001",    # Mdian HH Incom ($)
-    "B02001_002",  # Popl dscribing thmslvs as "whit alon"
-    "B07010_001",     # stimat!!Total Individuals
-    "B07010_002",  # stimat!!Total:!!No incom
-    "B07010_011", # stimat!!Total:!!With incom:!!$75,000 or mor
-    "B07010_023",   # stimat!!Total:!!Movd within sam county:
-    "B07010_034",  # stimat!!Total:!!Movd from diffrnt county:
-    "B07010_045",   # stimat!!Total:!!Movd from diffrnt country:
-    "B07010_012",  # Estimate!!Total:!!Same house 1 year ago:
-    "B15003_023",  #Estimate!!Total:!!Disc jockeys, except radio
-    "B15003_024",  #Estimate!!Total:!!Disc jockeys, except radio
-    "B15003_025"  #Estimate!!Total:!!Disc jockeys, except radio
-
-              ) 
-
-myTracts <- c(
-    "42101007400", 
-    "42101007300", 
-    "42101008000", 
-    "42101007800", 
-    "42101007700",
-    "42101008000",
-    "42101007900",
-    "42101008802", # just west of UPENN
-    #"42101036900", # UPENN, hospitals, woodlands
-    #"42101008801", # UPENN
-    "42101008702",
-    "42101008701",
-    "42101008601"
-              )
-
-
-acsTractsPHL.2019.sf <- get_acs(geography = "tract",
-                             year = 2019,
-                             variables = acs_vars,
-                             geometry = TRUE,
-                             state  = "PA",
-                             county = "Philadelphia",
-                             output = "wide") %>%
-  dplyr::select (GEOID, NAME, all_of(paste0(acs_vars,"E"))) %>%
-  rename (
-      total_pop.2019 = B01001_001E,    # ACS total Pop estimate
-      total_25yrpop.2019 = B15003_001E,
-      total_HU.2019 = B25002_001E,     # Estimate of total housing units
-      total_vacant.2019 = B25002_003E,     # Number of vacant housing units
-      med_HH_income.2019 = B19013_001E,    # Median HH Income ($)
-      total_white.2019 = B02001_002E,  # People describing themselves as "white alone"
-      total_indi.2019 = B07010_001E,     # Estimate!!Total Individuals
-      total_no_income.2019 = B07010_002E,  # Estimate!!Total:!!No income
-      total_income_75k.2019 = B07010_011E, # Estimate!!Total:!!With income:!!$75,000 or more
-      total_moved_incnty.2019 = B07010_023E,   # Estimate!!Total:!!Moved within same county:
-      total_moved_outcnty.2019 = B07010_034E,  # Estimate!!Total:!!Moved from different county:
-      total_moved_outusa.2019 = B07010_045E,   # Estimate!!Total:!!Moved from different country:
-      total_same_house_1yr.2019 = B07010_012E,  # Estimate!!Total:!!Same house 1 year ago:
-      total_masters.2019 = B15003_023E
-  ) %>%
-  mutate(
-    Neighborhood = ifelse(GEOID %in% myTracts,
-                               "CLARK PARK",
-                               "REST OF PHILADELPHIA"),
-    moved_1yr_PCT.2019 = (1 - total_same_house_1yr.2019 / total_indi.2019 )*100,
-    masters_PCT.2019 = ((total_masters.2019 + B15003_024E+ B15003_025E) / total_25yrpop.2019 )*100
-    )
-```
-
-## Transform to WGS84 with {sf}
-
-```{r}
-acsTractsPHL.2019.sf <- acsTractsPHL.2019.sf %>% 
-  st_transform(crs = "EPSG:4326")
-```
-
-## Plot with {ggplot2}
-
-```{r ggplot_geom_sf, warning = FALSE, echo = FALSE}
-max_pct = max(acsTractsPHL.2019.sf$moved_1yr_PCT.2019[is.finite(acsTractsPHL.2019.sf$moved_1yr_PCT.2019)])
-
-ggplot()+
-  # POLYGON color 
-  geom_sf(data = acsTractsPHL.2019.sf, 
-          aes(fill = moved_1yr_PCT.2019),
-          color = "transparent")+
-  # blank on top
-  geom_sf(data = acsTractsPHL.2019.sf %>%
-            filter(Neighborhood == "CLARK PARK") %>%
-            st_union(),
-            color = "black",
-            size=1, #linetype="longdash",
-            fill = "transparent"
-          ) + 
-  scale_fill_gradient2(
-      low="green4", mid="white", high="red4", midpoint=20,
-      breaks = c(0,20,40,60), labels = c("0%","20%","40%","60%"),
-      name="% of New Residents")+
-  guides(fill = guide_colourbar(barheight = 10))+
-  labs(
-    title = "Percentage of individuals who have moved in the last year",
-    subtitle = "Focus on the Clark Park neighborhood") +
-  theme(plot.title = element_text(hjust = 0.5), axis.title.x=element_blank(), 
-        axis.text.x=element_blank(), axis.ticks.x=element_blank(),
-        axis.title.y=element_blank(), axis.text.y=element_blank(), 
-        axis.ticks.y=element_blank(),
-        panel.background = element_rect(fill='gray'))
-```
-
-\# )
-
-\#brewer.pal(3, name="Dark2")
-
-```{r ggplot_geom_sf, warning = FALSE, echo = FALSE}
-
-library(RColorBrewer)
-
-
-ggplot()+
-  #POLYGON
-  geom_sf(data = acsTractsPHL.2019.sf,
-          fill = "white",
-          color = "grey75"
-          )+
-  # POINT
-  geom_sf(data = acsTractsPHL.2019.sf  %>%
-          st_centroid(),                # to centroid
-          shape = 21, color='grey10',
-          aes(
-            size = masters_PCT.2019,    # set point size by column value
-            fill = masters_PCT.2019     # set point fill ('color') by column value
-          )) +
-  # Scale for the Point Size
-  scale_size_continuous(
-          range = c(0,6),             # range of point sizes
-          breaks = c(0,20,40,60),       # value breaks/bins of point size
-          labels = c("0 to 19 %", "20 to 39 %", "40 to 59%", "60+ %"), 
-                                        # legend labels
-          name="% of People over 25yrs with a \nMaster's, Doctoral, or Professional Degree"
-          )+
-  scale_fill_stepsn(                    # binned scale of point fill
-          colors = RColorBrewer::brewer.pal( # pulling ColorBrewer list of colors
-                      4,                # amount of bins
-                      name="BuPu"       # ColorBrewer palette
-                      ),
-          breaks = c(0,20,40,60),       # value breaks/bins of point size
-          guide = FALSE                 # remove legend (so we can have one combo)
-          )+
-    labs(
-          title = "Percentage of Adults who earned \n a Master's Degree or Higher",
-          ) +
-    theme(
-          axis.title=element_blank(), 
-          axis.text=element_blank(), axis.ticks=element_blank(), # remove ticks
-          panel.background = element_rect(fill='gray')
-          )+
-    guides(
-          size = guide_legend(
-              override.aes = list(fill = brewer.pal(4, name="BuPu"))
-          ))                            # add the ColorBrewer list to the legend
-```
-
-```
-
-------------------------------------------------------------------------
-
-## 6 Geom Line Plots
-
-***Rent & Crime compared to the Distance to BART stations***
-
-```{r 6_geom_line}
-
-```
-
-------------------------------------------------------------------------
-
-## 7 Policy Brief
-
-------------------------------------------------------------------------
-
-## Load data from {tidycensus}
-
-```{r acs_vars, cache = TRUE, message = FALSE, warning = FALSE, results=FALSE}
-acs_vars <- c(
-    "B01001_001",    # ACS total Pop stimat
-    "B15003_001",
-    "B25002_001",     # stimat of total housing units
-    "B25002_003",     # Numbr of vacant housing units
-    "B19013_001",    # Mdian HH Incom ($)
-    "B02001_002",  # Popl dscribing thmslvs as "whit alon"
-    "B07010_001",     # stimat!!Total Individuals
-    "B07010_002",  # stimat!!Total:!!No incom
-    "B07010_011", # stimat!!Total:!!With incom:!!$75,000 or mor
-    "B07010_023",   # stimat!!Total:!!Movd within sam county:
-    "B07010_034",  # stimat!!Total:!!Movd from diffrnt county:
-    "B07010_045",   # stimat!!Total:!!Movd from diffrnt country:
-    "B07010_012",  # Estimate!!Total:!!Same house 1 year ago:
-    "B15003_023",  #Estimate!!Total:!!Disc jockeys, except radio
-    "B15003_024",  #Estimate!!Total:!!Disc jockeys, except radio
-    "B15003_025"  #Estimate!!Total:!!Disc jockeys, except radio
-
-              ) 
-
-myTracts <- c(
-    "42101007400", 
-    "42101007300", 
-    "42101008000", 
-    "42101007800", 
-    "42101007700",
-    "42101008000",
-    "42101007900",
-    "42101008802", # just west of UPENN
-    #"42101036900", # UPENN, hospitals, woodlands
-    #"42101008801", # UPENN
-    "42101008702",
-    "42101008701",
-    "42101008601"
-              )
-
-
-acsTractsPHL.2019.sf <- get_acs(geography = "tract",
-                             year = 2019,
-                             variables = acs_vars,
-                             geometry = TRUE,
-                             state  = "PA",
-                             county = "Philadelphia",
-                             output = "wide") %>%
-  dplyr::select (GEOID, NAME, all_of(paste0(acs_vars,"E"))) %>%
-  rename (
-      total_pop.2019 = B01001_001E,    # ACS total Pop estimate
-      total_25yrpop.2019 = B15003_001E,
-      total_HU.2019 = B25002_001E,     # Estimate of total housing units
-      total_vacant.2019 = B25002_003E,     # Number of vacant housing units
-      med_HH_income.2019 = B19013_001E,    # Median HH Income ($)
-      total_white.2019 = B02001_002E,  # People describing themselves as "white alone"
-      total_indi.2019 = B07010_001E,     # Estimate!!Total Individuals
-      total_no_income.2019 = B07010_002E,  # Estimate!!Total:!!No income
-      total_income_75k.2019 = B07010_011E, # Estimate!!Total:!!With income:!!$75,000 or more
-      total_moved_incnty.2019 = B07010_023E,   # Estimate!!Total:!!Moved within same county:
-      total_moved_outcnty.2019 = B07010_034E,  # Estimate!!Total:!!Moved from different county:
-      total_moved_outusa.2019 = B07010_045E,   # Estimate!!Total:!!Moved from different country:
-      total_same_house_1yr.2019 = B07010_012E,  # Estimate!!Total:!!Same house 1 year ago:
-      total_masters.2019 = B15003_023E
-  ) %>%
-  mutate(
-    Neighborhood = ifelse(GEOID %in% myTracts,
-                               "CLARK PARK",
-                               "REST OF PHILADELPHIA"),
-    moved_1yr_PCT.2019 = (1 - total_same_house_1yr.2019 / total_indi.2019 )*100,
-    masters_PCT.2019 = ((total_masters.2019 + B15003_024E+ B15003_025E) / total_25yrpop.2019 )*100
-    )
-```
-
-## Transform to WGS84 with {sf}
-
-```{r}
-acsTractsPHL.2019.sf <- acsTractsPHL.2019.sf %>% 
-  st_transform(crs = "EPSG:4326")
-```
-
-## Plot with {ggplot2}
-
-```{r ggplot_geom_sf, warning = FALSE, echo = FALSE}
-max_pct = max(acsTractsPHL.2019.sf$moved_1yr_PCT.2019[is.finite(acsTractsPHL.2019.sf$moved_1yr_PCT.2019)])
-
-ggplot()+
-  # POLYGON color 
-  geom_sf(data = acsTractsPHL.2019.sf, 
-          aes(fill = moved_1yr_PCT.2019),
-          color = "transparent")+
-  # blank on top
-  geom_sf(data = acsTractsPHL.2019.sf %>%
-            filter(Neighborhood == "CLARK PARK") %>%
-            st_union(),
-            color = "black",
-            size=1, #linetype="longdash",
-            fill = "transparent"
-          ) + 
-  scale_fill_gradient2(
-      low="green4", mid="white", high="red4", midpoint=20,
-      breaks = c(0,20,40,60), labels = c("0%","20%","40%","60%"),
-      name="% of New Residents")+
-  guides(fill = guide_colourbar(barheight = 10))+
-  labs(
-    title = "Percentage of individuals who have moved in the last year",
-    subtitle = "Focus on the Clark Park neighborhood") +
-  theme(plot.title = element_text(hjust = 0.5), axis.title.x=element_blank(), 
-        axis.text.x=element_blank(), axis.ticks.x=element_blank(),
-        axis.title.y=element_blank(), axis.text.y=element_blank(), 
-        axis.ticks.y=element_blank(),
-        panel.background = element_rect(fill='gray'))
-```
-
-\# )
-
-\#brewer.pal(3, name="Dark2")
-
-```{r ggplot_geom_sf, warning = FALSE, echo = FALSE}
-
-library(RColorBrewer)
-
-
-ggplot()+
-  #POLYGON
-  geom_sf(data = acsTractsPHL.2019.sf,
-          fill = "white",
-          color = "grey75"
-          )+
-  # POINT
-  geom_sf(data = acsTractsPHL.2019.sf  %>%
-          st_centroid(),                # to centroid
-          shape = 21, color='grey10',
-          aes(
-            size = masters_PCT.2019,    # set point size by column value
-            fill = masters_PCT.2019     # set point fill ('color') by column value
-          )) +
-  # Scale for the Point Size
-  scale_size_continuous(
-          range = c(0,6),             # range of point sizes
-          breaks = c(0,20,40,60),       # value breaks/bins of point size
-          labels = c("0 to 19 %", "20 to 39 %", "40 to 59%", "60+ %"), 
-                                        # legend labels
-          name="% of People over 25yrs with a \nMaster's, Doctoral, or Professional Degree"
-          )+
-  scale_fill_stepsn(                    # binned scale of point fill
-          colors = RColorBrewer::brewer.pal( # pulling ColorBrewer list of colors
-                      4,                # amount of bins
-                      name="BuPu"       # ColorBrewer palette
-                      ),
-          breaks = c(0,20,40,60),       # value breaks/bins of point size
-          guide = FALSE                 # remove legend (so we can have one combo)
-          )+
-    labs(
-          title = "Percentage of Adults who earned \n a Master's Degree or Higher",
-          ) +
-    theme(
-          axis.title=element_blank(), 
-          axis.text=element_blank(), axis.ticks=element_blank(), # remove ticks
-          panel.background = element_rect(fill='gray')
-          )+
-    guides(
-          size = guide_legend(
-              override.aes = list(fill = brewer.pal(4, name="BuPu"))
-          ))                            # add the ColorBrewer list to the legend
-```
+The study's examination of the East Bay's Housing Crisis suggest the lack of housing units allow higher income, younger tech employees to *out price* the local residents. The five variable maps in Section \@ref(section2) suggest this narrative. The table of Section \@ref(section4) and the population/units maps of Section \@ref(section5) highlight that the non-TOD tracts have been stagnant on their housing production -- leading to higher competition and prices of the smaller housing stock. The BART stations themselves are a magnet to density and general interests -- suggesting that there should be an evaluation to expand BART and TOD. 
